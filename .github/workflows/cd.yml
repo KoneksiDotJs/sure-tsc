@@ -79,6 +79,8 @@ jobs:
     name: Build & Package Release Bundle
     needs: prepare
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://sure:sure_password@localhost:5432/sure_cd?schema=public
     steps:
       - name: Checkout verified commit
         uses: actions/checkout@v4

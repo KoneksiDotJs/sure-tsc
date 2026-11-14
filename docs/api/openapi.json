@@ -5016,6 +5016,54 @@
             "type": "string",
             "minLength": 6,
             "maxLength": 6
+          },
+          "passkeyAssertion": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "rawId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "response": {
+                "type": "object",
+                "properties": {
+                  "clientDataJSON": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "authenticatorData": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "signature": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "userHandle": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "clientDataJSON",
+                  "authenticatorData",
+                  "signature"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "rawId",
+              "response"
+            ]
+          },
+          "challengeToken": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [
@@ -5105,11 +5153,13 @@
           },
           "locale": {
             "type": "string",
-            "default": "en-US"
+            "minLength": 2,
+            "maxLength": 20
           },
           "dateFormat": {
             "type": "string",
-            "default": "YYYY-MM-DD"
+            "minLength": 4,
+            "maxLength": 20
           }
         }
       },
@@ -6958,6 +7008,10 @@
           "prompt": {
             "type": "string",
             "minLength": 1,
+            "maxLength": 4000
+          },
+          "systemPrompt": {
+            "type": "string",
             "maxLength": 4000
           }
         },

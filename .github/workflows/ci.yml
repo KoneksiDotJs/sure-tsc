@@ -31,6 +31,8 @@ jobs:
   quality:
     name: Lint, Typecheck & Build
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://sure:sure_password@localhost:5432/sure_ci?schema=public
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
