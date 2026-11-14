@@ -1,0 +1,214 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: "Run Playwright E2E smoke tests"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+
+jobs:
+  quality:
+    name: Lint, Typecheck & Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @sure/api run prisma:generate
+
+      - name: Validate Prisma schema
+        run: pnpm --filter @sure/api exec prisma validate
+
+      - name: Lint workspaces
+        run: pnpm lint
+
+      - name: Typecheck workspaces
+        run: pnpm typecheck
+
+      - name: Build all packages & apps
+        run: pnpm build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sure-build-dist-${{ github.sha }}
+          path: |
+            packages/shared/dist
+            packages/ui/dist
+            apps/api/dist
+            apps/web/dist
+          retention-days: 7
+
+  test:
+    name: Unit & Integration Tests
+    needs: quality
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sure
+          POSTGRES_PASSWORD: sure_password
+          POSTGRES_DB: sure_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U sure -d sure_test"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://sure:sure_password@localhost:5432/sure_test?schema=public
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-test-session-secret-minimum-32-characters
+      CORS_ORIGIN: http://localhost:5173
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @sure/api run prisma:generate
+
+      - name: Push Prisma schema to test PostgreSQL
+        run: pnpm --filter @sure/api exec prisma db push --skip-generate
+
+      - name: Run unit & integration test suites
+        run: pnpm test
+
+  e2e:
+    name: Playwright E2E Smoke
+    needs: test
+    if: ${{ inputs.run_e2e == true || vars.ENABLE_E2E == 'true' }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sure
+          POSTGRES_PASSWORD: sure_password
+          POSTGRES_DB: sure_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U sure -d sure_e2e"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      NODE_ENV: development
+      PORT: "4000"
+      DATABASE_URL: postgresql://sure:sure_password@localhost:5432/sure_e2e?schema=public
+      REDIS_URL: redis://localhost:6379
+      SESSION_SECRET: ci-e2e-session-secret-minimum-32-characters
+      CORS_ORIGIN: http://localhost:5173
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client & push schema
+        run: |
+          pnpm --filter @sure/api run prisma:generate
+          pnpm --filter @sure/api exec prisma db push --skip-generate
+          pnpm --filter @sure/api run prisma:seed
+
+      - name: Install Playwright Chromium browser
+        run: pnpm --filter @sure/web exec playwright install --with-deps chromium
+
+      - name: Build packages & run E2E suite
+        run: |
+          pnpm build
+          node apps/api/dist/server.js &
+          pnpm --filter @sure/web dev &
+          npx --yes wait-on http://localhost:4000/api/v1/health http://localhost:5173 -t 60000
+          pnpm --filter @sure/web exec playwright test
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: apps/web/playwright-report
+          retention-days: 7

@@ -1,0 +1,249 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target deployment environment"
+        type: choice
+        required: true
+        default: production
+        options:
+          - staging
+          - production
+      dry_run:
+        description: "Build & package release without triggering deployment hooks"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+
+jobs:
+  prepare:
+    name: Resolve Release Metadata
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      version: ${{ steps.meta.outputs.version }}
+      environment: ${{ steps.meta.outputs.environment }}
+      is_tag: ${{ steps.meta.outputs.is_tag }}
+    steps:
+      - name: Compute release SHA, version, and environment
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            TARGET_SHA="${{ github.event.workflow_run.head_sha }}"
+          else
+            TARGET_SHA="${{ github.sha }}"
+          fi
+
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+            IS_TAG="true"
+            TARGET_ENV="production"
+          else
+            SHORT_SHA="${TARGET_SHA:0:7}"
+            VERSION="v0.0.0-${SHORT_SHA}"
+            IS_TAG="false"
+            TARGET_ENV="${{ inputs.environment || 'production' }}"
+          fi
+
+          echo "sha=${TARGET_SHA}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "environment=${TARGET_ENV}" >> "$GITHUB_OUTPUT"
+          echo "is_tag=${IS_TAG}" >> "$GITHUB_OUTPUT"
+
+  package-and-release:
+    name: Build & Package Release Bundle
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout verified commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @sure/api run prisma:generate
+
+      - name: Build production bundles
+        run: pnpm build
+
+      - name: Create production release archive
+        shell: bash
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          ARCHIVE="sure-release-${VERSION}.tar.gz"
+          tar -czf "${ARCHIVE}" \
+            package.json \
+            pnpm-lock.yaml \
+            pnpm-workspace.yaml \
+            apps/api/package.json \
+            apps/api/dist \
+            apps/api/prisma \
+            apps/web/package.json \
+            apps/web/dist \
+            packages/shared/package.json \
+            packages/shared/dist \
+            packages/ui/package.json \
+            packages/ui/dist
+          echo "RELEASE_ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sure-release-${{ needs.prepare.outputs.version }}
+          path: ${{ env.RELEASE_ARCHIVE }}
+          retention-days: 30
+
+      - name: Publish GitHub Release for version tags
+        if: ${{ needs.prepare.outputs.is_tag == 'true' && inputs.dry_run != true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: "Sure ${{ needs.prepare.outputs.version }}"
+          generate_release_notes: true
+          files: ${{ env.RELEASE_ARCHIVE }}
+
+  deploy:
+    name: Deploy to ${{ needs.prepare.outputs.environment }}
+    needs:
+      - prepare
+      - package-and-release
+    if: ${{ inputs.dry_run != true }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.prepare.outputs.environment }}
+    steps:
+      - name: Checkout verified commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Download packaged release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: sure-release-${{ needs.prepare.outputs.version }}
+          path: ./release
+
+      - name: Run production database migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        shell: bash
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL secret is not set; skipping Prisma migration deploy."
+            echo "MIGRATION_STATUS=skipped (secret DATABASE_URL not configured)" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          pnpm install --frozen-lockfile --filter @sure/api...
+          pnpm --filter @sure/api run prisma:generate
+          pnpm --filter @sure/api exec prisma migrate deploy
+          echo "MIGRATION_STATUS=applied" >> "$GITHUB_ENV"
+
+      - name: Trigger deployment webhook
+        env:
+          DEPLOY_WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+          DEPLOY_WEBHOOK_TOKEN: ${{ secrets.DEPLOY_WEBHOOK_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$DEPLOY_WEBHOOK_URL" ]; then
+            echo "DEPLOY_WEBHOOK_URL secret is not set; skipping webhook trigger."
+            echo "WEBHOOK_STATUS=skipped (secret DEPLOY_WEBHOOK_URL not configured)" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          AUTH_HEADER=()
+          if [ -n "$DEPLOY_WEBHOOK_TOKEN" ]; then
+            AUTH_HEADER=(-H "Authorization: Bearer ${DEPLOY_WEBHOOK_TOKEN}")
+          fi
+
+          curl -fsSL -X POST "$DEPLOY_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            "${AUTH_HEADER[@]}" \
+            -d "{\"version\":\"${{ needs.prepare.outputs.version }}\",\"sha\":\"${{ needs.prepare.outputs.sha }}\",\"environment\":\"${{ needs.prepare.outputs.environment }}\"}"
+          echo "WEBHOOK_STATUS=triggered" >> "$GITHUB_ENV"
+
+      - name: Verify live API healthcheck
+        env:
+          APP_HEALTHCHECK_URL: ${{ vars.APP_HEALTHCHECK_URL }}
+        shell: bash
+        run: |
+          if [ -z "$APP_HEALTHCHECK_URL" ]; then
+            echo "APP_HEALTHCHECK_URL variable is not set; skipping post-deploy healthcheck."
+            echo "HEALTH_STATUS=skipped (variable APP_HEALTHCHECK_URL not configured)" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          BASE_URL="${APP_HEALTHCHECK_URL%/}"
+          for attempt in $(seq 1 10); do
+            if curl -fsSL "${BASE_URL}/api/v1/health"; then
+              echo ""
+              echo "HEALTH_STATUS=healthy" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "Attempt ${attempt}/10 failed; retrying in 5s..."
+            sleep 5
+          done
+
+          echo "Healthcheck failed at ${BASE_URL}/api/v1/health"
+          exit 1
+
+      - name: Write deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## Deployment Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Environment | \`${{ needs.prepare.outputs.environment }}\` |"
+            echo "| Version | \`${{ needs.prepare.outputs.version }}\` |"
+            echo "| Commit SHA | \`${{ needs.prepare.outputs.sha }}\` |"
+            echo "| Migrations | ${MIGRATION_STATUS:-skipped} |"
+            echo "| Deploy Webhook | ${WEBHOOK_STATUS:-skipped} |"
+            echo "| API Healthcheck | ${HEALTH_STATUS:-skipped} |"
+          } >> "$GITHUB_STEP_SUMMARY"
