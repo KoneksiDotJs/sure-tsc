@@ -1,0 +1,766 @@
+// Sure — Multi-Tenant Personal Finance & Wealth Management Platform
+// PostgreSQL 16+ Schema with strict DECIMAL(19, 4) financial precision
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum FamilyRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum PermissionLevel {
+  VIEW
+  EDIT
+  FULL
+}
+
+enum AccountType {
+  DEPOSITORY
+  CREDIT_CARD
+  INVESTMENT
+  CRYPTO
+  PROPERTY
+  VEHICLE
+  LOAN
+  OTHER_ASSET
+  OTHER_LIABILITY
+}
+
+enum AccountClassification {
+  ASSET
+  LIABILITY
+}
+
+enum EntryType {
+  TRANSACTION
+  VALUATION
+  TRADE
+}
+
+enum ValuationKind {
+  OPENING
+  RECONCILIATION
+  MARKET
+}
+
+enum TradeAction {
+  BUY
+  SELL
+  DIVIDEND
+  SPLIT
+}
+
+enum CategoryClassification {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+enum ImportFormat {
+  CSV
+  QIF
+  PDF
+}
+
+enum ImportStatus {
+  PENDING
+  COMPLETED
+  REVERTED
+}
+
+enum RuleMatchMode {
+  ALL
+  ANY
+}
+
+enum RecurringCadence {
+  WEEKLY
+  BIWEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum ProviderCategory {
+  BANKING
+  CRYPTO
+  BROKERAGE
+  MARKET_DATA
+}
+
+enum ProviderStatus {
+  CONNECTED
+  SYNCING
+  WARNING
+  ERROR
+}
+
+enum FinancekitStatus {
+  STAGED
+  CONFLICT
+  COMMITTED
+}
+
+enum ConflictType {
+  DUPLICATE_ENTRY
+  UNMAPPED_ACCOUNT
+  BALANCE_MISMATCH
+}
+
+enum InsightType {
+  SPENDING_ANOMALY
+  SUBSCRIPTION_HIKE
+  IDLE_CASH
+  CASH_FLOW_WARNING
+  NET_WORTH_MILESTONE
+}
+
+enum InsightSeverity {
+  INFO
+  WARNING
+  POSITIVE
+}
+
+model Family {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  baseCurrency String   @default("USD") @db.VarChar(3)
+  aiEnabled    Boolean  @default(false)
+  locale       String   @default("en-US")
+  dateFormat   String   @default("YYYY-MM-DD")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships           FamilyMembership[]
+  accounts              Account[]
+  entries               Entry[]
+  categories            Category[]
+  merchants             Merchant[]
+  tags                  Tag[]
+  imports               Import[]
+  ruleGroups            RuleGroup[]
+  rules                 Rule[]
+  budgets               Budget[]
+  goals                 Goal[]
+  recurringTransactions RecurringTransaction[]
+  transferMatches       TransferMatch[]
+  providerConnections   ProviderConnection[]
+  financekitBatches     FinancekitBatch[]
+  financekitConflicts   FinancekitConflict[]
+  apiKeys               ApiKey[]
+  chats                 Chat[]
+  insights              Insight[]
+
+  @@map("families")
+}
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  email              String    @unique
+  passwordHash       String
+  name               String
+  emailVerifiedAt    DateTime?
+  totpSecret         String?
+  mfaEnabled         Boolean   @default(false)
+  passkeyCredentials Json      @default("[]")
+  isSuperAdmin       Boolean   @default(false)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  memberships            FamilyMembership[]
+  apiKeys                ApiKey[]
+  chats                  Chat[]
+  impersonationsInitiated ImpersonationSession[] @relation("SuperAdminImpersonator")
+  impersonationsTargeted  ImpersonationSession[] @relation("TargetImpersonatedUser")
+
+  @@map("users")
+}
+
+model FamilyMembership {
+  id        String     @id @default(uuid()) @db.Uuid
+  familyId  String     @db.Uuid
+  userId    String     @db.Uuid
+  role      FamilyRole @default(MEMBER)
+  createdAt DateTime   @default(now())
+
+  family       Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountShares AccountShare[]
+  budgetShares  BudgetShare[]
+  goalPledges   GoalPledge[]
+
+  @@unique([familyId, userId])
+  @@map("family_memberships")
+}
+
+model AccountShare {
+  id           String          @id @default(uuid()) @db.Uuid
+  accountId    String          @db.Uuid
+  membershipId String          @db.Uuid
+  permission   PermissionLevel @default(VIEW)
+
+  account    Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  membership FamilyMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, membershipId])
+  @@map("account_shares")
+}
+
+model BudgetShare {
+  id           String          @id @default(uuid()) @db.Uuid
+  budgetId     String          @db.Uuid
+  membershipId String          @db.Uuid
+  permission   PermissionLevel @default(VIEW)
+
+  budget     Budget           @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  membership FamilyMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetId, membershipId])
+  @@map("budget_shares")
+}
+
+model ImpersonationSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  superAdminUserId String    @db.Uuid
+  targetUserId     String    @db.Uuid
+  reason           String
+  startedAt        DateTime  @default(now())
+  endedAt          DateTime?
+
+  superAdmin User @relation("SuperAdminImpersonator", fields: [superAdminUserId], references: [id])
+  targetUser User @relation("TargetImpersonatedUser", fields: [targetUserId], references: [id])
+
+  @@map("impersonation_sessions")
+}
+
+model ApiKey {
+  id         String    @id @default(uuid()) @db.Uuid
+  familyId   String    @db.Uuid
+  userId     String    @db.Uuid
+  name       String
+  keyHash    String    @unique
+  keyPrefix  String
+  scopes     String[]
+  expiresAt  DateTime?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+model Account {
+  id                   String                @id @default(uuid()) @db.Uuid
+  familyId             String                @db.Uuid
+  name                 String
+  accountType          AccountType
+  classification       AccountClassification
+  currency             String                @default("USD") @db.VarChar(3)
+  balance              Decimal               @default(0.0000) @db.Decimal(19, 4)
+  subtypeDetails       Json                  @default("{}")
+  color                String                @default("#10b981")
+  icon                 String                @default("Wallet")
+  isActive             Boolean               @default(true)
+  providerConnectionId String?               @db.Uuid
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  family                Family                 @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  providerConnection    ProviderConnection?    @relation(fields: [providerConnectionId], references: [id], onDelete: SetNull)
+  entries               Entry[]
+  balances              AccountBalance[]
+  holdings              Holding[]
+  shares                AccountShare[]
+  imports               Import[]
+  goalAccounts          GoalAccount[]
+  recurringTransactions RecurringTransaction[]
+
+  @@index([familyId, accountType])
+  @@map("accounts")
+}
+
+model AccountBalance {
+  id                      String   @id @default(uuid()) @db.Uuid
+  accountId               String   @db.Uuid
+  date                    DateTime @db.Date
+  balance                 Decimal  @db.Decimal(19, 4)
+  balanceInFamilyCurrency Decimal  @db.Decimal(19, 4)
+  currency                String   @db.VarChar(3)
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, date])
+  @@index([accountId, date])
+  @@map("account_balances")
+}
+
+model Entry {
+  id            String    @id @default(uuid()) @db.Uuid
+  accountId     String    @db.Uuid
+  familyId      String    @db.Uuid
+  entryType     EntryType
+  date          DateTime  @db.Date
+  amount        Decimal   @db.Decimal(19, 4)
+  currency      String    @default("USD") @db.VarChar(3)
+  name          String
+  notes         String?
+  excluded      Boolean   @default(false)
+  parentEntryId String?   @db.Uuid
+  importId      String?   @db.Uuid
+  externalId    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  account     Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  family      Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  parentEntry Entry?        @relation("SplitChildEntries", fields: [parentEntryId], references: [id], onDelete: Cascade)
+  childSplits Entry[]       @relation("SplitChildEntries")
+  importBatch Import?       @relation(fields: [importId], references: [id], onDelete: SetNull)
+  transaction Transaction?
+  valuation   Valuation?
+  trade       Trade?
+  tags        EntryTag[]
+  outflowMatch TransferMatch? @relation("OutflowTransferEntry")
+  inflowMatch  TransferMatch? @relation("InflowTransferEntry")
+
+  @@index([familyId, date(sort: Desc)])
+  @@index([accountId, date(sort: Desc)])
+  @@map("entries")
+}
+
+model Transaction {
+  id          String   @id @default(uuid()) @db.Uuid
+  entryId     String   @unique @db.Uuid
+  categoryId  String?  @db.Uuid
+  merchantId  String?  @db.Uuid
+  attachments String[] @default([])
+
+  entry    Entry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  @@map("transactions")
+}
+
+model Valuation {
+  id      String        @id @default(uuid()) @db.Uuid
+  entryId String        @unique @db.Uuid
+  kind    ValuationKind @default(RECONCILIATION)
+
+  entry Entry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@map("valuations")
+}
+
+model Security {
+  id           String  @id @default(uuid()) @db.Uuid
+  ticker       String  @unique
+  name         String
+  currency     String  @default("USD") @db.VarChar(3)
+  currentPrice Decimal @default(0.0000) @db.Decimal(19, 4)
+  assetClass   String  @default("EQUITY")
+
+  trades   Trade[]
+  holdings Holding[]
+
+  @@map("securities")
+}
+
+model Trade {
+  id         String      @id @default(uuid()) @db.Uuid
+  entryId    String      @unique @db.Uuid
+  securityId String      @db.Uuid
+  action     TradeAction
+  qty        Decimal     @db.Decimal(19, 8)
+  price      Decimal     @db.Decimal(19, 4)
+  fees       Decimal     @default(0.0000) @db.Decimal(19, 4)
+
+  entry    Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict)
+
+  @@map("trades")
+}
+
+model Holding {
+  id           String  @id @default(uuid()) @db.Uuid
+  accountId    String  @db.Uuid
+  securityId   String  @db.Uuid
+  qty          Decimal @db.Decimal(19, 8)
+  avgCostBasis Decimal @db.Decimal(19, 4)
+  marketValue  Decimal @db.Decimal(19, 4)
+
+  account  Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  security Security @relation(fields: [securityId], references: [id], onDelete: Restrict)
+
+  @@unique([accountId, securityId])
+  @@map("holdings")
+}
+
+model TransferMatch {
+  id             String   @id @default(uuid()) @db.Uuid
+  familyId       String   @db.Uuid
+  outflowEntryId String   @unique @db.Uuid
+  inflowEntryId  String   @unique @db.Uuid
+  matchedBy      String   @default("AUTO")
+  createdAt      DateTime @default(now())
+
+  family       Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  outflowEntry Entry  @relation("OutflowTransferEntry", fields: [outflowEntryId], references: [id], onDelete: Cascade)
+  inflowEntry  Entry  @relation("InflowTransferEntry", fields: [inflowEntryId], references: [id], onDelete: Cascade)
+
+  @@map("transfer_matches")
+}
+
+model Category {
+  id             String                 @id @default(uuid()) @db.Uuid
+  familyId       String                 @db.Uuid
+  name           String
+  classification CategoryClassification @default(EXPENSE)
+  color          String                 @default("#3b82f6")
+  icon           String                 @default("Tag")
+  parentId       String?                @db.Uuid
+
+  family                Family                 @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  parent                Category?              @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children              Category[]             @relation("CategoryHierarchy")
+  transactions          Transaction[]
+  merchants             Merchant[]
+  budgetCategories      BudgetCategory[]
+  recurringTransactions RecurringTransaction[]
+
+  @@unique([familyId, name])
+  @@map("categories")
+}
+
+model Merchant {
+  id                String  @id @default(uuid()) @db.Uuid
+  familyId          String  @db.Uuid
+  name              String
+  color             String  @default("#6366f1")
+  icon              String  @default("Store")
+  website           String?
+  defaultCategoryId String? @db.Uuid
+
+  family                Family                 @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  defaultCategory       Category?              @relation(fields: [defaultCategoryId], references: [id], onDelete: SetNull)
+  transactions          Transaction[]
+  recurringTransactions RecurringTransaction[]
+
+  @@unique([familyId, name])
+  @@map("merchants")
+}
+
+model Tag {
+  id       String @id @default(uuid()) @db.Uuid
+  familyId String @db.Uuid
+  name     String
+  color    String @default("#10b981")
+
+  family  Family     @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  entries EntryTag[]
+
+  @@unique([familyId, name])
+  @@map("tags")
+}
+
+model EntryTag {
+  entryId String @db.Uuid
+  tagId   String @db.Uuid
+
+  entry Entry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, tagId])
+  @@map("entry_tags")
+}
+
+model Import {
+  id            String       @id @default(uuid()) @db.Uuid
+  familyId      String       @db.Uuid
+  accountId     String       @db.Uuid
+  format        ImportFormat
+  fileName      String
+  status        ImportStatus @default(PENDING)
+  rowCount      Int          @default(0)
+  columnMapping Json         @default("{}")
+  revertedAt    DateTime?
+  createdAt     DateTime     @default(now())
+
+  family  Family  @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  entries Entry[]
+
+  @@map("imports")
+}
+
+model RuleGroup {
+  id        String @id @default(uuid()) @db.Uuid
+  familyId  String @db.Uuid
+  name      String
+  sortOrder Int    @default(0)
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  rules  Rule[]
+
+  @@map("rule_groups")
+}
+
+model Rule {
+  id          String        @id @default(uuid()) @db.Uuid
+  familyId    String        @db.Uuid
+  ruleGroupId String?       @db.Uuid
+  name        String
+  priority    Int           @default(100)
+  matchMode   RuleMatchMode @default(ALL)
+  isActive    Boolean       @default(true)
+  conditions  Json
+  actions     Json
+  createdAt   DateTime      @default(now())
+
+  family    Family     @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  ruleGroup RuleGroup? @relation(fields: [ruleGroupId], references: [id], onDelete: SetNull)
+
+  @@map("rules")
+}
+
+model Budget {
+  id              String  @id @default(uuid()) @db.Uuid
+  familyId        String  @db.Uuid
+  month           String  @db.VarChar(7) // YYYY-MM
+  expectedIncome  Decimal @default(0.0000) @db.Decimal(19, 4)
+  rolloverEnabled Boolean @default(true)
+
+  family     Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  categories BudgetCategory[]
+  shares     BudgetShare[]
+
+  @@unique([familyId, month])
+  @@map("budgets")
+}
+
+model BudgetCategory {
+  id              String  @id @default(uuid()) @db.Uuid
+  budgetId        String  @db.Uuid
+  categoryId      String  @db.Uuid
+  budgetedAmount  Decimal @db.Decimal(19, 4)
+  rolloverAmount  Decimal @default(0.0000) @db.Decimal(19, 4)
+  rolloverEnabled Boolean @default(true)
+
+  budget   Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetId, categoryId])
+  @@map("budget_categories")
+}
+
+model Goal {
+  id            String   @id @default(uuid()) @db.Uuid
+  familyId      String   @db.Uuid
+  name          String
+  targetAmount  Decimal  @db.Decimal(19, 4)
+  currentAmount Decimal  @default(0.0000) @db.Decimal(19, 4)
+  monthlyPledge Decimal  @default(0.0000) @db.Decimal(19, 4)
+  targetDate    DateTime @db.Date
+  color         String   @default("#10b981")
+  icon          String   @default("Target")
+  createdAt     DateTime @default(now())
+
+  family   Family        @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  accounts GoalAccount[]
+  pledges  GoalPledge[]
+
+  @@map("goals")
+}
+
+model GoalAccount {
+  id                String  @id @default(uuid()) @db.Uuid
+  goalId            String  @db.Uuid
+  accountId         String  @db.Uuid
+  allocationPercent Decimal @default(100.0000) @db.Decimal(19, 4)
+
+  goal    Goal    @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([goalId, accountId])
+  @@map("goal_accounts")
+}
+
+model GoalPledge {
+  id           String   @id @default(uuid()) @db.Uuid
+  goalId       String   @db.Uuid
+  membershipId String   @db.Uuid
+  amount       Decimal  @db.Decimal(19, 4)
+  date         DateTime @db.Date
+
+  goal       Goal             @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  membership FamilyMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@map("goal_pledges")
+}
+
+model RecurringTransaction {
+  id                 String           @id @default(uuid()) @db.Uuid
+  familyId           String           @db.Uuid
+  accountId          String           @db.Uuid
+  categoryId         String?          @db.Uuid
+  merchantId         String?          @db.Uuid
+  name               String
+  amount             Decimal          @db.Decimal(19, 4)
+  lastAmount         Decimal?         @db.Decimal(19, 4)
+  currency           String           @default("USD") @db.VarChar(3)
+  cadence            RecurringCadence @default(MONTHLY)
+  nextOccurrenceDate DateTime         @db.Date
+  autoPay            Boolean          @default(true)
+
+  family      Family                @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  account     Account               @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category    Category?             @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  merchant    Merchant?             @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  occurrences RecurringOccurrence[]
+
+  @@map("recurring_transactions")
+}
+
+model RecurringOccurrence {
+  id                     String   @id @default(uuid()) @db.Uuid
+  recurringTransactionId String   @db.Uuid
+  expectedDate           DateTime @db.Date
+  amount                 Decimal  @db.Decimal(19, 4)
+  matchedEntryId         String?  @db.Uuid
+  status                 String   @default("UPCOMING")
+
+  recurringTransaction RecurringTransaction @relation(fields: [recurringTransactionId], references: [id], onDelete: Cascade)
+
+  @@map("recurring_occurrences")
+}
+
+model ExchangeRate {
+  id             String   @id @default(uuid()) @db.Uuid
+  baseCurrency   String   @db.VarChar(3)
+  targetCurrency String   @db.VarChar(3)
+  date           DateTime @db.Date
+  rate           Decimal  @db.Decimal(19, 8)
+
+  @@unique([baseCurrency, targetCurrency, date])
+  @@map("exchange_rates")
+}
+
+model ProviderConnection {
+  id                   String           @id @default(uuid()) @db.Uuid
+  familyId             String           @db.Uuid
+  providerKey          String
+  providerCategory     ProviderCategory
+  institutionName      String
+  status               ProviderStatus   @default(CONNECTED)
+  lastSyncedAt         DateTime?
+  encryptedCredentials String?
+  createdAt            DateTime         @default(now())
+
+  family   Family            @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  accounts Account[]
+  batches  FinancekitBatch[]
+
+  @@map("provider_connections")
+}
+
+model FinancekitBatch {
+  id                   String           @id @default(uuid()) @db.Uuid
+  familyId             String           @db.Uuid
+  providerConnectionId String           @db.Uuid
+  status               FinancekitStatus @default(STAGED)
+  itemCount            Int              @default(0)
+  createdAt            DateTime         @default(now())
+
+  family             Family               @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  providerConnection ProviderConnection   @relation(fields: [providerConnectionId], references: [id], onDelete: Cascade)
+  items              FinancekitItem[]
+  conflicts          FinancekitConflict[]
+
+  @@map("financekit_batches")
+}
+
+model FinancekitItem {
+  id         String           @id @default(uuid()) @db.Uuid
+  batchId    String           @db.Uuid
+  externalId String
+  payload    Json
+  status     FinancekitStatus @default(STAGED)
+
+  batch     FinancekitBatch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  conflicts FinancekitConflict[]
+
+  @@map("financekit_items")
+}
+
+model FinancekitConflict {
+  id              String       @id @default(uuid()) @db.Uuid
+  batchId         String       @db.Uuid
+  itemId          String       @db.Uuid
+  familyId        String       @db.Uuid
+  conflictType    ConflictType
+  incomingSummary Json
+  existingEntryId String?      @db.Uuid
+  resolution      String?
+  resolvedAt      DateTime?
+
+  batch  FinancekitBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  item   FinancekitItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  family Family          @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@map("financekit_conflicts")
+}
+
+model Chat {
+  id         String   @id @default(uuid()) @db.Uuid
+  familyId   String   @db.Uuid
+  userId     String   @db.Uuid
+  title      String
+  tokenCount Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  family   Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@map("chats")
+}
+
+model Message {
+  id        String   @id @default(uuid()) @db.Uuid
+  chatId    String   @db.Uuid
+  role      String   // USER | ASSISTANT | TOOL
+  content   String
+  toolCalls Json     @default("[]")
+  createdAt DateTime @default(now())
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model Insight {
+  id           String          @id @default(uuid()) @db.Uuid
+  familyId     String          @db.Uuid
+  type         InsightType
+  severity     InsightSeverity @default(INFO)
+  title        String
+  description  String
+  metricAmount Decimal?        @db.Decimal(19, 4)
+  dismissed    Boolean         @default(false)
+  createdAt    DateTime        @default(now())
+
+  family Family @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@map("insights")
+}

@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@source "../../../packages/ui/src";
+@custom-variant theme-dark (&:where([data-theme=dark], [data-theme=dark] *));
+
+@import "./styles/fonts.css";
+@import "./styles/print-report.css";
