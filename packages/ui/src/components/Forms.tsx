@@ -69,11 +69,15 @@ export const MoneyField: React.FC<MoneyFieldProps> = ({
 
   const symbols: Record<string, string> = {
     USD: '$',
+    IDR: 'Rp',
     EUR: '€',
     GBP: '£',
     JPY: '¥',
+    CNY: 'CN¥',
+    SGD: 'S$',
     CAD: 'CA$',
     AUD: 'A$',
+    CHF: 'CHF',
   };
   const symbol = symbols[currency.toUpperCase()] ?? currency.toUpperCase();
 

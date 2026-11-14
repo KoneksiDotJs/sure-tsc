@@ -414,12 +414,21 @@ interface LedgerContextValue {
     name: string;
     baseCurrency: string;
     aiEnabled: boolean;
+    locale: string;
+    dateFormat: string;
     mfaEnabled: boolean;
     members: Array<{ id: string; name: string; email: string; role: 'OWNER' | 'ADMIN' | 'MEMBER' }>;
     apiKeys: Array<{ id: string; name: string; prefix: string; scopes: string[]; createdAt: string }>;
   };
   updateFamilySettings: (
-    patch: Partial<{ name: string; baseCurrency: string; aiEnabled: boolean; mfaEnabled: boolean }>
+    patch: Partial<{
+      name: string;
+      baseCurrency: string;
+      aiEnabled: boolean;
+      locale: string;
+      dateFormat: string;
+      mfaEnabled: boolean;
+    }>
   ) => Promise<void>;
   inviteFamilyMember: (input: {
     email: string;
@@ -784,6 +793,8 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       name: session?.family.name ?? 'Family Workspace',
       baseCurrency: session?.family.baseCurrency ?? 'USD',
       aiEnabled: session?.family.aiEnabled ?? false,
+      locale: session?.family.locale ?? 'en-US',
+      dateFormat: session?.family.dateFormat ?? 'YYYY-MM-DD',
       mfaEnabled: session?.user.mfaEnabled ?? false,
       members: (session?.memberships ?? []).map((m) => ({
         id: m.id,
@@ -818,13 +829,21 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       if (typeof patch.mfaEnabled === 'boolean' && !patch.mfaEnabled) {
         await apiRequest('/api/v1/auth/mfa/disable', { method: 'POST' });
       }
-      if (patch.name !== undefined || patch.baseCurrency !== undefined || patch.aiEnabled !== undefined) {
+      if (
+        patch.name !== undefined ||
+        patch.baseCurrency !== undefined ||
+        patch.aiEnabled !== undefined ||
+        patch.locale !== undefined ||
+        patch.dateFormat !== undefined
+      ) {
         await apiRequest('/api/v1/family', {
           method: 'PATCH',
           body: JSON.stringify({
             ...(patch.name !== undefined ? { name: patch.name } : {}),
             ...(patch.baseCurrency !== undefined ? { baseCurrency: patch.baseCurrency } : {}),
             ...(patch.aiEnabled !== undefined ? { aiEnabled: patch.aiEnabled } : {}),
+            ...(patch.locale !== undefined ? { locale: patch.locale } : {}),
+            ...(patch.dateFormat !== undefined ? { dateFormat: patch.dateFormat } : {}),
           }),
         });
       }
@@ -1370,8 +1389,33 @@ export const LedgerProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const runBayesAutoCategorizer = () =>
     runAction(async () => {
+      let bodyPayload: Record<string, string> = {};
+      if (typeof window !== 'undefined' && family.id) {
+        try {
+          const raw = window.localStorage.getItem(`sure:ai_prompts:${family.id}`);
+          if (raw) {
+            const parsed = JSON.parse(raw) as {
+              categorizerProvider?: string;
+              categorizerModel?: string;
+              categorizer?: string;
+            };
+            if (parsed.categorizerProvider) {
+              bodyPayload.provider = parsed.categorizerProvider;
+            }
+            if (parsed.categorizerModel) {
+              bodyPayload.model = parsed.categorizerModel;
+            }
+            if (parsed.categorizer) {
+              bodyPayload.systemPrompt = parsed.categorizer;
+            }
+          }
+        } catch {
+          // Ignore storage read errors
+        }
+      }
       const res = await apiRequest<{ categorizedCount: number }>('/api/v1/ai/categorize', {
         method: 'POST',
+        body: JSON.stringify(bodyPayload),
       });
       await invalidateLedger();
       return res.categorizedCount;

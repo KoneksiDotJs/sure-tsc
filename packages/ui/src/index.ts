@@ -1,5 +1,6 @@
 export * from './context/PrivacyModeContext.js';
 export * from './context/ThemeContext.js';
+export * from './context/LocaleContext.js';
 export * from './components/Layout.js';
 export * from './components/Navigation.js';
 export * from './components/Forms.js';

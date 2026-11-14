@@ -185,9 +185,28 @@ export const ResolveFinancekitConflictSchema = z.object({
 });
 
 // FR-7: AI Financial Assistant
+export const AiProviderEnum = z.enum([
+  'auto',
+  'groq',
+  'gemini',
+  'openrouter',
+  'ollama',
+  'openai',
+  'anthropic',
+]);
+
+export const AiConfigUpdateSchema = z.object({
+  provider: AiProviderEnum.default('groq'),
+  apiKey: z.string().max(400).optional(),
+  model: z.string().max(120).optional(),
+  baseUrl: z.string().max(300).optional(),
+  clearApiKey: z.boolean().optional(),
+});
+
 export const AiChatMessageInputSchema = z.object({
   chatId: z.string().uuid().optional(),
   prompt: z.string().min(1).max(4000),
+  systemPrompt: z.string().max(4000).optional(),
 });
 
 export type CreateCategoryInput = z.infer<typeof CreateCategorySchema>;
@@ -200,4 +219,6 @@ export type UpsertBudgetMonthInput = z.infer<typeof UpsertBudgetMonthSchema>;
 export type CreateGoalInput = z.infer<typeof CreateGoalSchema>;
 export type CreateRecurringInput = z.infer<typeof CreateRecurringSchema>;
 export type ResolveFinancekitConflictInput = z.infer<typeof ResolveFinancekitConflictSchema>;
+export type AiProvider = z.infer<typeof AiProviderEnum>;
+export type AiConfigUpdateInput = z.infer<typeof AiConfigUpdateSchema>;
 export type AiChatMessageInput = z.infer<typeof AiChatMessageInputSchema>;

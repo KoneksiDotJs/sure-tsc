@@ -111,6 +111,7 @@ export function evaluateAmountExpression(
   scale: number = DISPLAY_SCALE
 ): string | null {
   const stripped = rawExpression
+    .replace(/rp/gi, '')
     .replace(/[$€£¥₹,\s]/g, '')
     .trim();
 
@@ -371,29 +372,39 @@ export function calculateBudgetRollover(params: {
 
 /**
  * Formats a Decimal string into a human-readable currency string for display.
+ * Respects Indonesian (`id` / `id-ID`) `.` thousand & `,` decimal separators when requested.
  */
 export function formatCurrency(
   amount: DecimalValue,
   currency: string = 'USD',
-  options?: { showSign?: boolean; compact?: boolean }
+  options?: { showSign?: boolean; compact?: boolean; locale?: string }
 ): string {
   const dec = toDecimal(amount);
   const isNeg = dec.isNegative();
   const absDec = dec.abs();
+  const code = currency.toUpperCase();
+  const localeBase = options?.locale?.trim().toLowerCase().split(/[-_]/)[0];
+  const isIndonesianFormat = localeBase === 'id' || localeBase === 'de' || localeBase === 'es' || localeBase === 'fr';
+  const thousandSep = isIndonesianFormat ? '.' : ',';
+  const decimalSep = isIndonesianFormat ? ',' : '.';
+
   const fixed = absDec.toFixed(DISPLAY_SCALE, Decimal.ROUND_HALF_EVEN);
   const [intPart = '0', fracPart = '00'] = fixed.split('.');
 
-  const formattedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const formattedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, thousandSep);
   const symbols: Record<string, string> = {
     USD: '$',
+    IDR: 'Rp',
     EUR: '€',
     GBP: '£',
     JPY: '¥',
+    CNY: 'CN¥',
+    SGD: 'S$',
     CAD: 'CA$',
     AUD: 'A$',
     CHF: 'CHF ',
   };
-  const symbol = symbols[currency.toUpperCase()] ?? `${currency.toUpperCase()} `;
+  const symbol = symbols[code] ?? `${code} `;
 
   let signPrefix = '';
   if (isNeg) {
@@ -402,5 +413,5 @@ export function formatCurrency(
     signPrefix = '+';
   }
 
-  return `${signPrefix}${symbol}${formattedInt}.${fracPart}`;
+  return `${signPrefix}${symbol}${formattedInt}${decimalSep}${fracPart}`;
 }

@@ -29,6 +29,7 @@ interface StagedRow {
 
 export const ImportsAndRulesView: React.FC = () => {
   const {
+    family,
     accounts,
     categories,
     imports,
@@ -395,7 +396,15 @@ export const ImportsAndRulesView: React.FC = () => {
                         <Pill label="Possible Duplicate" color="#f59e0b" />
                       )}
                     </label>
-                    <MoneyAmount value={row.amount} colorize showSign />
+                    <MoneyAmount
+                      value={row.amount}
+                      currency={
+                        accounts.find((a) => a.id === effectiveAccountId)?.currency ??
+                        family.baseCurrency
+                      }
+                      colorize
+                      showSign
+                    />
                   </div>
                 ))}
               </div>
@@ -662,7 +671,7 @@ export const ImportsAndRulesView: React.FC = () => {
                   {m.date}
                 </div>
               </div>
-              <MoneyAmount value={m.amount} />
+              <MoneyAmount value={m.amount} currency={family.baseCurrency} />
             </div>
           ))}
         </div>

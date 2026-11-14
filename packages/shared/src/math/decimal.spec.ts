@@ -11,6 +11,11 @@ import {
   calculateBudgetRollover,
   formatCurrency,
 } from './decimal.js';
+import {
+  getLocaleConfig,
+  translate,
+  formatLocalizedDate,
+} from '../i18n/locales.js';
 
 describe('Decimal Monetary Arithmetic & Precision (NFR-1)', () => {
   it('avoids IEEE-754 floating point rounding errors (0.1 + 0.2)', () => {
@@ -80,5 +85,17 @@ describe('Decimal Monetary Arithmetic & Precision (NFR-1)', () => {
     expect(formatCurrency('125430.5', 'USD')).toBe('$125,430.50');
     expect(formatCurrency('-42.1', 'USD')).toBe('-$42.10');
     expect(formatCurrency('89.99', 'EUR', { showSign: true })).toBe('+€89.99');
+    expect(formatCurrency('1500000', 'IDR')).toBe('Rp1,500,000.00');
+    expect(formatCurrency('1500000.5', 'IDR', { locale: 'id-ID' })).toBe('Rp1.500.000,50');
+  });
+
+  it('provides Indonesian localization defaults, translations, and date formatting', () => {
+    const idConfig = getLocaleConfig('id-ID');
+    expect(idConfig.code).toBe('id');
+    expect(idConfig.defaultCurrency).toBe('IDR');
+    expect(idConfig.defaultCountry).toBe('ID');
+    expect(idConfig.dateFormat).toBe('DD/MM/YYYY');
+    expect(translate('id', 'prefs.currencies.title')).toBe('Mata Uang Keluarga');
+    expect(formatLocalizedDate('2026-11-15', idConfig.dateFormat)).toBe('15/11/2026');
   });
 });

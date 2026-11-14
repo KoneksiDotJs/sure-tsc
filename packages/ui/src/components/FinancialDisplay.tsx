@@ -1,10 +1,12 @@
 import React, { useId, useState } from 'react';
 import { formatCurrency, isPositiveMoney, isNegativeMoney } from '@sure/shared';
 import { usePrivacyMode } from '../context/PrivacyModeContext.js';
+import { useLocale } from '../context/LocaleContext.js';
 
 export interface MoneyAmountProps {
   value: string;
   currency?: string;
+  locale?: string;
   colorize?: boolean;
   showSign?: boolean;
   className?: string;
@@ -17,11 +19,13 @@ export interface MoneyAmountProps {
 export const MoneyAmount: React.FC<MoneyAmountProps> = ({
   value,
   currency = 'USD',
+  locale,
   colorize = false,
   showSign = false,
   className = '',
 }) => {
   const { enabled: privacyEnabled } = usePrivacyMode();
+  const { bcp47 } = useLocale();
 
   let colorClass = 'text-[var(--text-primary)]';
   if (colorize) {
@@ -32,7 +36,10 @@ export const MoneyAmount: React.FC<MoneyAmountProps> = ({
     }
   }
 
-  const formatted = formatCurrency(value, currency, { showSign });
+  const formatted = formatCurrency(value, currency, {
+    showSign,
+    locale: locale ?? bcp47,
+  });
 
   return (
     <span

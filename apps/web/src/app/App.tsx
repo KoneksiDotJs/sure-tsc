@@ -5,6 +5,8 @@ import {
   usePrivacyMode,
   ThemeProvider,
   useTheme,
+  LocaleProvider,
+  useLocale,
   Button,
   SlideOverDrawer,
   Dialog,
@@ -26,6 +28,7 @@ import { ImportsAndRulesView } from '../features/imports/ImportsAndRulesView.js'
 import { BudgetsAndGoalsView } from '../features/budgets/BudgetsAndGoalsView.js';
 import { ReportsAndSyncView } from '../features/reports/ReportsAndSyncView.js';
 import { SettingsView } from '../features/settings/SettingsView.js';
+import { AiAssistantPanel, AiChatMessageItem } from '../features/ai/AiAssistantPanel.js';
 import {
   Home,
   Wallet,
@@ -39,23 +42,21 @@ import {
   Sun,
   Moon,
   Command,
-  Send,
   LogOut,
   PanelLeft,
   PanelRight,
   Plus,
   ChevronRight,
   ChevronsUpDown,
-  X,
 } from 'lucide-react';
 
 const NAV_ITEMS = [
-  { id: 'dashboard', railLabel: 'Home', label: 'Dashboard', icon: Home },
-  { id: 'accounts', railLabel: 'Accounts', label: 'Accounts & Loans', icon: Wallet },
-  { id: 'transactions', railLabel: 'Ledger', label: 'Ledger & Splits', icon: ArrowLeftRight },
-  { id: 'imports', railLabel: 'Imports', label: 'Imports & Rules', icon: FileSpreadsheet },
-  { id: 'budgets', railLabel: 'Budgets', label: 'Budgets & Goals', icon: PieChart },
-  { id: 'reports', railLabel: 'Reports', label: 'Reports & Sync', icon: BarChart3 },
+  { id: 'dashboard', railKey: 'nav.home' as const, railLabel: 'Home', label: 'Dashboard', icon: Home },
+  { id: 'accounts', railKey: 'nav.accounts' as const, railLabel: 'Accounts', label: 'Accounts & Loans', icon: Wallet },
+  { id: 'transactions', railKey: 'nav.transactions' as const, railLabel: 'Ledger', label: 'Ledger & Splits', icon: ArrowLeftRight },
+  { id: 'imports', railKey: 'nav.imports' as const, railLabel: 'Imports', label: 'Imports & Rules', icon: FileSpreadsheet },
+  { id: 'budgets', railKey: 'nav.budgets' as const, railLabel: 'Budgets', label: 'Budgets & Goals', icon: PieChart },
+  { id: 'reports', railKey: 'nav.reports' as const, railLabel: 'Reports', label: 'Reports & Sync', icon: BarChart3 },
 ] as const;
 
 type NavTabId = (typeof NAV_ITEMS)[number]['id'] | 'settings';
@@ -185,7 +186,14 @@ const SureWorkspaceShell: React.FC = () => {
   const { family, accounts, updateFamilySettings, lastError, clearError, isLoading } = useLedger();
   const { enabled: privacyEnabled, toggle: togglePrivacy } = usePrivacyMode();
   const { resolvedTheme, toggleDark } = useTheme();
+  const { t, setLocale } = useLocale();
   const darkMode = resolvedTheme === 'dark';
+
+  useEffect(() => {
+    if (family.locale) {
+      setLocale(family.locale);
+    }
+  }, [family.locale, setLocale]);
 
   const [activeTab, setActiveTab] = useState<NavTabId>('dashboard');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -196,20 +204,15 @@ const SureWorkspaceShell: React.FC = () => {
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [cmdOpen, setCmdOpen] = useState<boolean>(false);
   const [chatInput, setChatInput] = useState<string>('');
-  const [chatMessages, setChatMessages] = useState<
-    Array<{
-      id: string;
-      role: 'USER' | 'ASSISTANT';
-      text: string;
-      toolCalled?: string;
-    }>
-  >([
-    {
-      id: 'm-1',
-      role: 'ASSISTANT',
-      text: 'Welcome to Sure AI Financial Assistant. Ask me about your Net Worth, Cash Flow Sankey, Budget Rollovers, or ask me to create rules and transactions.',
-      toolCalled: 'get_balance_sheet',
-    },
+  const [isAiSending, setIsAiSending] = useState<boolean>(false);
+  const INITIAL_WELCOME_MESSAGE: AiChatMessageItem = {
+    id: 'm-1',
+    role: 'ASSISTANT',
+    text: 'Welcome to Sure AI Financial Assistant. Ask me about your Net Worth, Cash Flow Sankey, Budget Rollovers, or ask me to create rules and transactions.',
+    toolCalled: 'get_balance_sheet',
+  };
+  const [chatMessages, setChatMessages] = useState<AiChatMessageItem[]>([
+    INITIAL_WELCOME_MESSAGE,
   ]);
 
   // Global Command Palette Shortcut: Cmd+K / Ctrl+K (DESIGN-SYSTEM.md Section 6)
@@ -224,28 +227,51 @@ const SureWorkspaceShell: React.FC = () => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const handleSendAiMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim() || !family.aiEnabled) return;
-    const userPrompt = chatInput.trim();
-    setChatInput('');
+  const handleSendAiMessage = async (promptOverride?: string) => {
+    const raw = promptOverride ?? chatInput;
+    if (!raw.trim() || !family.aiEnabled || isAiSending) return;
+    const userPrompt = raw.trim();
+    if (!promptOverride) {
+      setChatInput('');
+    }
 
     setChatMessages((prev) => [
       ...prev,
       { id: `u-${Date.now()}`, role: 'USER', text: userPrompt },
     ]);
+    setIsAiSending(true);
 
     try {
+      let customSystemPrompt: string | undefined;
+      try {
+        const storedPrompts = window.localStorage.getItem(`sure:ai_prompts:${family.id}`);
+        if (storedPrompts) {
+          const parsed = JSON.parse(storedPrompts) as { mainSystem?: string };
+          if (parsed.mainSystem?.trim()) {
+            customSystemPrompt = parsed.mainSystem.trim().slice(0, 4000);
+          }
+        }
+      } catch {
+        // Ignore storage read errors
+      }
+
       const chat = await apiRequest<{
         messages: Array<{
           id: string;
           role: 'USER' | 'ASSISTANT';
           content: string;
-          toolCalls?: Array<{ toolName: string }> | null;
+          toolCalls?: Array<{
+            toolName: string;
+            args?: { model?: string };
+            resultSummary?: string;
+          }> | null;
         }>;
       }>('/api/v1/ai/chat', {
         method: 'POST',
-        body: JSON.stringify({ prompt: userPrompt }),
+        body: JSON.stringify({
+          prompt: userPrompt,
+          ...(customSystemPrompt ? { systemPrompt: customSystemPrompt } : {}),
+        }),
       });
 
       const assistantMsg = [...(chat.messages ?? [])]
@@ -253,16 +279,22 @@ const SureWorkspaceShell: React.FC = () => {
         .find((m) => m.role === 'ASSISTANT');
 
       if (assistantMsg) {
-        const toolCalled = Array.isArray(assistantMsg.toolCalls)
-          ? assistantMsg.toolCalls.map((t) => t.toolName).join(' & ')
-          : undefined;
+        const calls = Array.isArray(assistantMsg.toolCalls) ? assistantMsg.toolCalls : [];
+        const llmCall = calls.find((c) => c.toolName.startsWith('llm_'));
+        const nonLlmTools = calls
+          .filter((c) => !c.toolName.startsWith('llm_'))
+          .map((c) => c.toolName)
+          .join(' & ');
         setChatMessages((prev) => [
           ...prev,
           {
             id: assistantMsg.id,
             role: 'ASSISTANT',
             text: assistantMsg.content,
-            toolCalled,
+            toolCalled: nonLlmTools || undefined,
+            providerUsed: llmCall ? llmCall.toolName.replace(/^llm_/, '') : undefined,
+            modelUsed: llmCall?.args?.model,
+            tokensSummary: llmCall?.resultSummary,
           },
         ]);
       }
@@ -275,6 +307,8 @@ const SureWorkspaceShell: React.FC = () => {
           text: err instanceof Error ? err.message : 'Unable to reach AI Assistant endpoint.',
         },
       ]);
+    } finally {
+      setIsAiSending(false);
     }
   };
 
@@ -535,94 +569,20 @@ const SureWorkspaceShell: React.FC = () => {
   );
 
   const renderAiAssistantBody = () => (
-    <div className="relative flex flex-col flex-1 min-h-0">
-      <div className="flex items-center justify-between pb-3 border-b border-[var(--border-primary)]">
-        <div className="flex items-center gap-2">
-          <img
-            src={darkMode ? '/images/ai-dark.svg' : '/images/ai.svg'}
-            alt="Sure AI"
-            className="w-5 h-5"
-          />
-          <div>
-            <div className="text-sm font-semibold leading-tight">Sure AI Assistant</div>
-            <div className="text-[11px] text-[var(--text-secondary)]">
-              Ledger-aware financial copilot
-            </div>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => setShowAiSidebar(false)}
-          className="p-1.5 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] cursor-pointer"
-          aria-label="Close AI sidebar"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      <div className="flex-1 overflow-y-auto py-4 space-y-3">
-        {chatMessages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`p-3 rounded-xl text-sm whitespace-pre-line ${
-              msg.role === 'USER'
-                ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-fg)] ml-8'
-                : 'bg-[var(--bg-surface-subtle)] border border-[var(--border-primary)] mr-4'
-            }`}
-          >
-            {msg.toolCalled && (
-              <div className="mb-1.5">
-                <Pill label={`Tool: ${msg.toolCalled}`} color="#078C52" />
-              </div>
-            )}
-            {msg.text}
-          </div>
-        ))}
-      </div>
-
-      <form
-        onSubmit={handleSendAiMessage}
-        className="flex items-center gap-2 pt-3 border-t border-[var(--border-primary)]"
-      >
-        <input
-          type="text"
-          value={chatInput}
-          onChange={(e) => setChatInput(e.target.value)}
-          disabled={!family.aiEnabled}
-          placeholder="Ask about Net Worth, Cash Flow, or Budgets..."
-          className="flex-1 px-3 py-2 text-sm rounded-lg bg-[var(--bg-surface)] border border-[var(--border-strong)] disabled:opacity-50"
-        />
-        <Button type="submit" size="md" disabled={!family.aiEnabled} icon={<Send className="w-4 h-4" />}>
-          Send
-        </Button>
-      </form>
-
-      {!family.aiEnabled && (
-        <div className="absolute inset-0 z-10 backdrop-blur-md bg-[var(--bg-canvas)]/75 flex items-center justify-center p-5">
-          <div className="w-full p-5 rounded-xl bg-[var(--bg-surface)] border border-[var(--border-primary)] shadow-md space-y-3">
-            <div className="flex items-center gap-2">
-              <img
-                src={darkMode ? '/images/ai-dark.svg' : '/images/ai.svg'}
-                alt=""
-                className="w-5 h-5"
-              />
-              <h3 className="text-sm font-semibold">AI Consent Required</h3>
-            </div>
-            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-              Your family ledger is private by default. Opt in to allow Sure AI to query balances,
-              cash flow, and budgets using <code>family.aiEnabled</code>.
-            </p>
-            <Button
-              size="sm"
-              className="w-full justify-center"
-              onClick={() => void updateFamilySettings({ aiEnabled: true })}
-            >
-              Enable Sure AI
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
+    <AiAssistantPanel
+      familyName={family.name}
+      aiEnabled={family.aiEnabled}
+      darkMode={darkMode}
+      messages={chatMessages}
+      input={chatInput}
+      isSending={isAiSending}
+      onInputChange={setChatInput}
+      onSend={(promptOverride) => void handleSendAiMessage(promptOverride)}
+      onClearChat={() => setChatMessages([INITIAL_WELCOME_MESSAGE])}
+      onEnableAi={() => void updateFamilySettings({ aiEnabled: true })}
+      onOpenAiSettings={() => setActiveTab('settings')}
+      onClose={() => setShowAiSidebar(false)}
+    />
   );
 
   const isSettingsView = activeTab === 'settings';
@@ -673,7 +633,7 @@ const SureWorkspaceShell: React.FC = () => {
                       active ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]'
                     }`}
                   >
-                    {item.railLabel}
+                    {t(item.railKey)}
                   </span>
                 </button>
               );
@@ -699,7 +659,7 @@ const SureWorkspaceShell: React.FC = () => {
             >
               <Settings className="w-4 h-4" />
             </span>
-            <span className="text-[11px] font-medium">Settings</span>
+            <span className="text-[11px] font-medium">{t('nav.settings')}</span>
           </button>
 
           <button
@@ -903,7 +863,7 @@ const SureWorkspaceShell: React.FC = () => {
 
       {/* 4. Dockable Right AI Assistant Sidebar (Desktop) */}
       {showAiSidebar && (
-        <aside className="no-print hidden lg:flex flex-col w-[360px] shrink-0 border-l border-[var(--border-primary)] bg-[var(--bg-surface)] p-4 sticky top-0 h-screen">
+        <aside className="no-print hidden lg:flex flex-col w-[410px] shrink-0 border-l border-[var(--border-primary)] bg-[var(--bg-surface)] p-4 sticky top-0 h-screen overflow-hidden">
           {renderAiAssistantBody()}
         </aside>
       )}
@@ -923,7 +883,7 @@ const SureWorkspaceShell: React.FC = () => {
               }`}
             >
               <Icon className="w-4 h-4" />
-              <span>{item.railLabel}</span>
+              <span>{t(item.railKey)}</span>
             </button>
           );
         })}
@@ -935,7 +895,7 @@ const SureWorkspaceShell: React.FC = () => {
           }`}
         >
           <Settings className="w-4 h-4" />
-          <span>Settings</span>
+          <span>{t('nav.settings')}</span>
         </button>
       </nav>
 
@@ -1030,10 +990,12 @@ const AuthenticatedWorkspace: React.FC = () => {
 
 export const App: React.FC = () => (
   <ThemeProvider defaultTheme="system">
-    <PrivacyModeProvider>
-      <AuthProvider>
-        <AuthenticatedWorkspace />
-      </AuthProvider>
-    </PrivacyModeProvider>
+    <LocaleProvider defaultLocale="en">
+      <PrivacyModeProvider>
+        <AuthProvider>
+          <AuthenticatedWorkspace />
+        </AuthProvider>
+      </PrivacyModeProvider>
+    </LocaleProvider>
   </ThemeProvider>
 );

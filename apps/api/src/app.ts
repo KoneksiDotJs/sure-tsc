@@ -16,6 +16,7 @@ import {
   CreateProviderConnectionSchema,
   ResolveFinancekitConflictSchema,
   AiChatMessageInputSchema,
+  AiConfigUpdateSchema,
   UpdateFamilySettingsSchema,
   InviteFamilyMemberSchema,
 } from '@sure/shared';
@@ -558,7 +559,67 @@ export function createApp(): Express {
     '/api/v1/ai/categorize',
     authenticateMiddleware,
     asyncHandler(async (req, res) => {
-      const result = await aiService.autoCategorizeUncategorized(req.auth.familyId);
+      const body = (req.body ?? {}) as {
+        provider?: 'auto' | 'groq' | 'gemini' | 'openrouter' | 'ollama' | 'openai' | 'anthropic' | 'bayes';
+        model?: string;
+        systemPrompt?: string;
+      };
+      const result = await aiService.autoCategorizeUncategorized(req.auth.familyId, body);
+      res.json({ data: result });
+    })
+  );
+
+  app.get(
+    '/api/v1/ai/models',
+    authenticateMiddleware,
+    asyncHandler(async (req, res) => {
+      const provider = typeof req.query.provider === 'string' ? req.query.provider : undefined;
+      const parsed = AiConfigUpdateSchema.partial().safeParse(
+        provider ? { provider } : {}
+      );
+      const data = await aiService.listAiModels(
+        req.auth.familyId,
+        parsed.success ? parsed.data : undefined
+      );
+      res.json({ data });
+    })
+  );
+
+  app.post(
+    '/api/v1/ai/models',
+    authenticateMiddleware,
+    validateRequest({ body: AiConfigUpdateSchema.partial().optional() }),
+    asyncHandler(async (req, res) => {
+      const data = await aiService.listAiModels(req.auth.familyId, req.body);
+      res.json({ data });
+    })
+  );
+
+  app.get(
+    '/api/v1/ai/config',
+    authenticateMiddleware,
+    asyncHandler(async (req, res) => {
+      const cfg = aiService.getAiConfig(req.auth.familyId);
+      res.json({ data: cfg });
+    })
+  );
+
+  app.put(
+    '/api/v1/ai/config',
+    authenticateMiddleware,
+    validateRequest({ body: AiConfigUpdateSchema }),
+    asyncHandler(async (req, res) => {
+      const cfg = aiService.updateAiConfig(req.auth.familyId, req.body);
+      res.json({ data: cfg });
+    })
+  );
+
+  app.post(
+    '/api/v1/ai/test',
+    authenticateMiddleware,
+    validateRequest({ body: AiConfigUpdateSchema.partial().optional() }),
+    asyncHandler(async (req, res) => {
+      const result = await aiService.testAiConnection(req.auth.familyId, req.body);
       res.json({ data: result });
     })
   );
@@ -571,7 +632,8 @@ export function createApp(): Express {
       const chat = await aiService.sendChatMessage(
         req.auth.familyId,
         req.auth.userId,
-        req.body.prompt
+        req.body.prompt,
+        req.body.systemPrompt
       );
       res.status(201).json({ data: chat });
     })

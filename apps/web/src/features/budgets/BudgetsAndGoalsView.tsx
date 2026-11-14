@@ -499,9 +499,24 @@ export const BudgetsAndGoalsView: React.FC = () => {
               className="w-full px-3 py-2 text-sm rounded-md bg-[var(--bg-surface)] border border-[var(--border-strong)]"
             />
           </div>
-          <MoneyField label="Target Amount" value={goalTarget} onChange={setGoalTarget} />
-          <MoneyField label="Current Saved Amount" value={goalCurrent} onChange={setGoalCurrent} />
-          <MoneyField label="Monthly Pledge" value={goalPledge} onChange={setGoalPledge} />
+          <MoneyField
+            label="Target Amount"
+            value={goalTarget}
+            onChange={setGoalTarget}
+            currency={family.baseCurrency}
+          />
+          <MoneyField
+            label="Current Saved Amount"
+            value={goalCurrent}
+            onChange={setGoalCurrent}
+            currency={family.baseCurrency}
+          />
+          <MoneyField
+            label="Monthly Pledge"
+            value={goalPledge}
+            onChange={setGoalPledge}
+            currency={family.baseCurrency}
+          />
           <div>
             <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
               Target Date
@@ -598,7 +613,15 @@ export const BudgetsAndGoalsView: React.FC = () => {
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <MoneyField label="Amount (negative = bill)" value={billAmount} onChange={setBillAmount} />
+            <MoneyField
+              label="Amount (negative = bill)"
+              value={billAmount}
+              onChange={setBillAmount}
+              currency={
+                accounts.find((a) => a.id === effectiveBillAccountId)?.currency ??
+                family.baseCurrency
+              }
+            />
             <div>
               <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
                 Cadence

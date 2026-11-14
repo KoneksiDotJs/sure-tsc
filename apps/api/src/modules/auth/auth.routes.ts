@@ -4,8 +4,13 @@ import {
   ChangePasswordSchema,
   CreateApiKeySchema,
   EnableMfaSchema,
+  ForgotPasswordSchema,
   LoginSchema,
+  PasskeyLoginOptionsSchema,
+  PasskeyLoginVerifySchema,
+  PasskeyRegisterVerifySchema,
   RegisterSchema,
+  ResetPasswordSchema,
 } from '@sure/shared';
 import {
   asyncHandler,
@@ -84,3 +89,74 @@ authRouter.patch(
   validateRequest({ body: ChangePasswordSchema }),
   asyncHandler(authController.changePassword.bind(authController))
 );
+
+authRouter.get(
+  '/providers',
+  asyncHandler(authController.providers.bind(authController))
+);
+
+authRouter.get(
+  '/oauth/:provider/start',
+  asyncHandler(authController.oauthStart.bind(authController))
+);
+
+authRouter.get(
+  '/oauth/:provider/callback',
+  asyncHandler(authController.oauthCallback.bind(authController))
+);
+
+authRouter.post(
+  '/password/forgot',
+  validateRequest({ body: ForgotPasswordSchema }),
+  asyncHandler(authController.forgotPassword.bind(authController))
+);
+
+authRouter.post(
+  '/password/reset',
+  validateRequest({ body: ResetPasswordSchema }),
+  asyncHandler(authController.resetPassword.bind(authController))
+);
+
+authRouter.post(
+  '/mfa/enable-passkey',
+  authenticateMiddleware,
+  asyncHandler(authController.enablePasskeyMfa.bind(authController))
+);
+
+authRouter.get(
+  '/passkeys',
+  authenticateMiddleware,
+  asyncHandler(authController.listPasskeys.bind(authController))
+);
+
+authRouter.post(
+  '/passkeys/register/options',
+  authenticateMiddleware,
+  asyncHandler(authController.passkeyRegisterOptions.bind(authController))
+);
+
+authRouter.post(
+  '/passkeys/register/verify',
+  authenticateMiddleware,
+  validateRequest({ body: PasskeyRegisterVerifySchema }),
+  asyncHandler(authController.passkeyRegisterVerify.bind(authController))
+);
+
+authRouter.delete(
+  '/passkeys/:id',
+  authenticateMiddleware,
+  asyncHandler(authController.deletePasskey.bind(authController))
+);
+
+authRouter.post(
+  '/passkeys/login/options',
+  validateRequest({ body: PasskeyLoginOptionsSchema }),
+  asyncHandler(authController.passkeyLoginOptions.bind(authController))
+);
+
+authRouter.post(
+  '/passkeys/login/verify',
+  validateRequest({ body: PasskeyLoginVerifySchema }),
+  asyncHandler(authController.passkeyLoginVerify.bind(authController))
+);
+

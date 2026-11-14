@@ -38,12 +38,18 @@ export function decimalToFixed(
 
 const DEFAULT_FX_RATES: Record<string, string> = {
   'USD:USD': '1.0000',
+  'USD:IDR': '15850.0000',
+  'IDR:USD': '0.0001',
   'EUR:USD': '1.0850',
   'USD:EUR': '0.9217',
   'GBP:USD': '1.2750',
   'USD:GBP': '0.7843',
   'CAD:USD': '0.7400',
   'USD:CAD': '1.3514',
+  'SGD:USD': '0.7450',
+  'USD:SGD': '1.3423',
+  'SGD:IDR': '11800.0000',
+  'IDR:SGD': '0.0001',
 };
 
 export async function getExchangeRate(

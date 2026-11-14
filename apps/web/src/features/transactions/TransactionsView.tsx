@@ -703,6 +703,7 @@ export const TransactionsView: React.FC = () => {
               <MoneyField
                 label="Split Portion Amount"
                 value={row.amount}
+                currency={activeEntry?.currency ?? family.baseCurrency}
                 onChange={(amount) => {
                   const next = [...splitRows];
                   next[idx] = { ...row, amount };
@@ -853,6 +854,10 @@ export const TransactionsView: React.FC = () => {
                   label="Transfer Amount"
                   value={transferAmount}
                   onChange={setTransferAmount}
+                  currency={
+                    accounts.find((a) => a.id === effectiveFromAccountId)?.currency ??
+                    family.baseCurrency
+                  }
                 />
               </div>
               <div>
@@ -980,7 +985,7 @@ export const TransactionsView: React.FC = () => {
                   entryType: newEntryType,
                   date: newDate,
                   amount: newAmount,
-                  currency: targetAccount?.currency ?? 'USD',
+                  currency: targetAccount?.currency ?? family.baseCurrency,
                   name: newName.trim(),
                   categoryId: newEntryType === 'TRANSACTION' ? effectiveCategoryId : null,
                   merchantId: null,
@@ -1054,6 +1059,10 @@ export const TransactionsView: React.FC = () => {
               label="Amount (Inline math e.g. -45.50 * 2)"
               value={newAmount}
               onChange={setNewAmount}
+              currency={
+                accounts.find((a) => a.id === effectiveAccountId)?.currency ??
+                family.baseCurrency
+              }
             />
           </div>
 

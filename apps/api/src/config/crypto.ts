@@ -1,4 +1,6 @@
 import {
+  createCipheriv,
+  createDecipheriv,
   createHash,
   createHmac,
   randomBytes,
@@ -137,3 +139,102 @@ export function verifyTotpCode(secret: string, code: string): boolean {
 export function buildTotpUri(email: string, secret: string): string {
   return `otpauth://totp/Sure:${encodeURIComponent(email)}?secret=${secret}&issuer=Sure`;
 }
+
+// ---------------------------------------------------------------------------
+// Signed Ephemeral Tokens (Password Reset, OAuth PKCE State, WebAuthn Challenges)
+// ---------------------------------------------------------------------------
+export function signEphemeralToken<T extends Record<string, unknown>>(
+  purpose: string,
+  payload: T,
+  ttlMs: number
+): string {
+  const envelope = {
+    purpose,
+    exp: Date.now() + ttlMs,
+    ...payload,
+  };
+  const data = Buffer.from(JSON.stringify(envelope)).toString('base64url');
+  const sig = createHmac('sha256', `${env.SESSION_SECRET}:${purpose}`)
+    .update(data)
+    .digest('base64url');
+  return `${data}.${sig}`;
+}
+
+export function verifyEphemeralToken<T extends Record<string, unknown>>(
+  purpose: string,
+  token: string
+): (T & { purpose: string; exp: number }) | null {
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+  const [data, sig] = parts;
+  if (!data || !sig) return null;
+
+  const expectedSig = createHmac('sha256', `${env.SESSION_SECRET}:${purpose}`)
+    .update(data)
+    .digest('base64url');
+
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(data, 'base64url').toString('utf8')) as T & {
+      purpose?: string;
+      exp?: number;
+    };
+    if (parsed.purpose !== purpose || typeof parsed.exp !== 'number' || parsed.exp < Date.now()) {
+      return null;
+    }
+    return parsed as T & { purpose: string; exp: number };
+  } catch {
+    return null;
+  }
+}
+
+export function passwordHashFingerprint(passwordHash: string): string {
+  return createHash('sha256').update(passwordHash).digest('hex').slice(0, 16);
+}
+
+export function createPkcePair(): { codeVerifier: string; codeChallenge: string } {
+  const codeVerifier = randomBytes(32).toString('base64url');
+  const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
+  return { codeVerifier, codeChallenge };
+}
+
+function getSecretCipherKey(): Buffer {
+  return createHash('sha256').update(env.SESSION_SECRET).digest();
+}
+
+export function encryptSecret(plaintext: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', getSecretCipherKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
+}
+
+export function decryptSecret(ciphertext: string): string | null {
+  try {
+    const parts = ciphertext.split('.');
+    if (parts.length !== 3) return null;
+    const [ivB64, tagB64, dataB64] = parts;
+    if (!ivB64 || !tagB64 || !dataB64) return null;
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      getSecretCipherKey(),
+      Buffer.from(ivB64, 'base64url'),
+      { authTagLength: 16 }
+    );
+    decipher.setAuthTag(Buffer.from(tagB64, 'base64url'));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(dataB64, 'base64url')),
+      decipher.final(),
+    ]);
+    return decrypted.toString('utf8');
+  } catch {
+    return null;
+  }
+}
+

@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AccountType,
+  SUPPORTED_CURRENCIES,
+  SUPPORTED_LANGUAGES,
+  TranslationKey,
+  getLocaleConfig,
+  normalizeLocaleCode,
   sumMoney,
 } from '@sure/shared';
 import {
@@ -17,9 +22,16 @@ import {
   SegmentedControl,
   Toggle,
   ThemePreference,
+  useLocale,
   useTheme,
 } from '@sure/ui';
 import { useAuth } from '../auth/AuthContext.js';
+import { apiRequest } from '../../lib/api-client.js';
+import {
+  createBrowserPasskey,
+  isWebAuthnSupported,
+  ServerRegistrationOptions,
+} from '../../lib/webauthn.js';
 import { useLedger, WebAccount } from '../../lib/ledger-context.js';
 import {
   TransactionsSettingsSections,
@@ -44,6 +56,7 @@ import {
   ChevronLeft,
   Download,
   ExternalLink,
+  Fingerprint,
   GitBranch,
   Key,
   Landmark,
@@ -86,27 +99,32 @@ type SettingsSectionId =
 
 interface SettingsNavItem {
   id: SettingsSectionId;
+  labelKey: TranslationKey;
   label: string;
   subtitle?: string;
   icon: React.ComponentType<{ className?: string }>;
 }
 
 interface SettingsNavGroup {
+  headingKey: TranslationKey;
   heading: string;
   items: SettingsNavItem[];
 }
 
 const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
   {
+    headingKey: 'settings.group.general',
     heading: 'General',
     items: [
       {
         id: 'accounts',
+        labelKey: 'settings.item.accounts',
         label: 'Accounts',
         icon: Layers,
       },
       {
         id: 'sync',
+        labelKey: 'settings.item.sync',
         label: 'Bank sync',
         subtitle:
           'Connect external accounts so transactions, balances and holdings flow into Sure automatically.',
@@ -114,122 +132,146 @@ const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
       },
       {
         id: 'preferences',
+        labelKey: 'settings.item.preferences',
         label: 'Preferences',
         icon: SettingsIcon,
       },
       {
         id: 'appearance',
+        labelKey: 'settings.item.appearance',
         label: 'Appearance',
         icon: Palette,
       },
       {
         id: 'profile',
+        labelKey: 'settings.item.profile',
         label: 'Profile Info',
         icon: UserCircle,
       },
       {
         id: 'security',
+        labelKey: 'settings.item.security',
         label: 'Security',
         icon: ShieldCheck,
       },
     ],
   },
   {
+    headingKey: 'settings.group.transactions',
     heading: 'Transactions',
     items: [
       {
         id: 'categories',
+        labelKey: 'settings.item.categories',
         label: 'Categories',
         icon: Shapes,
       },
       {
         id: 'tags',
+        labelKey: 'settings.item.tags',
         label: 'Tags',
         icon: Tag,
       },
       {
         id: 'rules',
+        labelKey: 'settings.item.rules',
         label: 'Rules',
         icon: GitBranch,
       },
       {
         id: 'merchants',
+        labelKey: 'settings.item.merchants',
         label: 'Merchants',
         icon: Store,
       },
       {
         id: 'recurring',
+        labelKey: 'settings.item.recurring',
         label: 'Recurring',
         icon: Repeat,
       },
       {
         id: 'auto_matches',
+        labelKey: 'settings.item.auto_matches',
         label: 'Auto Matches',
         icon: Link2,
       },
       {
         id: 'statement_vault',
+        labelKey: 'settings.item.statement_vault',
         label: 'Statement Vault',
         icon: Archive,
       },
     ],
   },
   {
+    headingKey: 'settings.group.advanced',
     heading: 'Advanced',
     items: [
       {
         id: 'ai_prompts',
+        labelKey: 'settings.item.ai_prompts',
         label: 'AI Prompts',
         icon: Bot,
       },
       {
         id: 'classifier',
+        labelKey: 'settings.item.classifier',
         label: 'Classifier',
         icon: SlidersHorizontal,
       },
       {
         id: 'llm_usage',
+        labelKey: 'settings.item.llm_usage',
         label: 'LLM Usage',
         subtitle: 'Track your AI usage and estimated costs',
         icon: Activity,
       },
       {
         id: 'api_keys',
+        labelKey: 'settings.item.api_keys',
         label: 'API Keys',
         icon: Key,
       },
       {
         id: 'mcp',
+        labelKey: 'settings.item.mcp',
         label: 'MCP',
         icon: Plug,
       },
       {
         id: 'imports',
+        labelKey: 'settings.item.imports',
         label: 'Imports',
         icon: Download,
       },
       {
         id: 'exports',
+        labelKey: 'settings.item.exports',
         label: 'Exports',
         icon: Upload,
       },
     ],
   },
   {
+    headingKey: 'settings.group.more',
     heading: 'More',
     items: [
       {
         id: 'guides',
+        labelKey: 'settings.item.guides',
         label: 'Guides',
         icon: BookOpen,
       },
       {
         id: 'whats_new',
+        labelKey: 'settings.item.whats_new',
         label: "What's new",
         icon: Box,
       },
       {
         id: 'feedback',
+        labelKey: 'settings.item.feedback',
         label: 'Feedback',
         icon: Megaphone,
       },
@@ -261,18 +303,6 @@ const ACCOUNT_TYPES: AccountType[] = [
   'LOAN',
   'OTHER_ASSET',
   'OTHER_LIABILITY',
-];
-
-const SUPPORTED_CURRENCIES: Array<{ code: string; name: string }> = [
-  { code: 'USD', name: 'United States Dollar (USD)' },
-  { code: 'EUR', name: 'Euro (EUR)' },
-  { code: 'GBP', name: 'British Pound (GBP)' },
-  { code: 'CAD', name: 'Canadian Dollar (CAD)' },
-  { code: 'AUD', name: 'Australian Dollar (AUD)' },
-  { code: 'CHF', name: 'Swiss Franc (CHF)' },
-  { code: 'JPY', name: 'Japanese Yen (JPY)' },
-  { code: 'CNY', name: 'Chinese Yuan (CNY)' },
-  { code: 'SGD', name: 'Singapore Dollar (SGD)' },
 ];
 
 interface LocalWorkspacePrefs {
@@ -317,12 +347,12 @@ function formatAccountSubtype(acc: WebAccount): string {
     typeof details.accountSubtype === 'string'
       ? details.accountSubtype
       : typeof details.loanSubtype === 'string'
-      ? details.loanSubtype
-      : typeof details.propertyType === 'string'
-      ? details.propertyType
-      : typeof details.walletType === 'string'
-      ? details.walletType
-      : acc.accountType;
+        ? details.loanSubtype
+        : typeof details.propertyType === 'string'
+          ? details.propertyType
+          : typeof details.walletType === 'string'
+            ? details.walletType
+            : acc.accountType;
   return raw
     .replace(/_/g, ' ')
     .toLowerCase()
@@ -342,8 +372,9 @@ export const SettingsView: React.FC<{
   onOpenAccount?: (accountId: string) => void;
   onNavigateToImports?: () => void;
 }> = ({ onBack, onSignOut, onOpenAccount, onNavigateToImports }) => {
-  const { session } = useAuth();
+  const { session, refreshSession } = useAuth();
   const { theme, setTheme } = useTheme();
+  const { locale, setLocale, t } = useLocale();
   const {
     family,
     accounts,
@@ -428,6 +459,106 @@ export const SettingsView: React.FC<{
   const [pwStatus, setPwStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [pwBusy, setPwBusy] = useState(false);
 
+  // Passkey & OAuth security state
+  const [passkeyNameDraft, setPasskeyNameDraft] = useState('MacBook / Windows Hello');
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyStatus, setPasskeyStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+  const [oauthProviders, setOauthProviders] = useState<{
+    google: boolean;
+    github: boolean;
+    googleRedirectUri: string;
+    githubRedirectUri: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (activeSection !== 'security') return;
+    void apiRequest<{
+      google: boolean;
+      github: boolean;
+      googleRedirectUri: string;
+      githubRedirectUri: string;
+    }>('/api/v1/auth/providers')
+      .then(setOauthProviders)
+      .catch(() => null);
+  }, [activeSection]);
+
+  const handleRegisterPasskey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasskeyStatus(null);
+    if (!isWebAuthnSupported()) {
+      setPasskeyStatus({ kind: 'error', text: 'This browser does not support WebAuthn Passkeys.' });
+      return;
+    }
+    setPasskeyBusy(true);
+    try {
+      const opts = await apiRequest<{
+        challengeToken: string;
+        options: ServerRegistrationOptions;
+      }>('/api/v1/auth/passkeys/register/options', { method: 'POST' });
+
+      const attestation = await createBrowserPasskey(opts.options);
+      await apiRequest('/api/v1/auth/passkeys/register/verify', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...attestation,
+          name: passkeyNameDraft.trim() || 'Passkey',
+          challengeToken: opts.challengeToken,
+        }),
+      });
+      await refreshSession();
+      setPasskeyStatus({
+        kind: 'success',
+        text: 'Passkey registered! You can now use it for passwordless sign-in or as MFA.',
+      });
+    } catch (err) {
+      setPasskeyStatus({
+        kind: 'error',
+        text: err instanceof Error ? err.message : 'Failed to register passkey',
+      });
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  const handleDeletePasskey = async (id: string) => {
+    setPasskeyStatus(null);
+    setPasskeyBusy(true);
+    try {
+      await apiRequest(`/api/v1/auth/passkeys/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+      await refreshSession();
+      setPasskeyStatus({ kind: 'success', text: 'Passkey removed.' });
+    } catch (err) {
+      setPasskeyStatus({
+        kind: 'error',
+        text: err instanceof Error ? err.message : 'Failed to remove passkey',
+      });
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
+  const handleEnablePasskeyMfa = async () => {
+    setPasskeyStatus(null);
+    setPasskeyBusy(true);
+    try {
+      await apiRequest('/api/v1/auth/mfa/enable-passkey', { method: 'POST' });
+      await refreshSession();
+      setPasskeyStatus({
+        kind: 'success',
+        text: 'MFA enabled using your registered Passkey.',
+      });
+    } catch (err) {
+      setPasskeyStatus({
+        kind: 'error',
+        text: err instanceof Error ? err.message : 'Could not enable Passkey MFA',
+      });
+    } finally {
+      setPasskeyBusy(false);
+    }
+  };
+
   // Backup state
   const [backupBusy, setBackupBusy] = useState(false);
 
@@ -485,8 +616,8 @@ export const SettingsView: React.FC<{
         adapter.category === 'CRYPTO'
           ? 'CRYPTO'
           : adapter.category === 'BROKERAGE' || adapter.category === 'MARKET_DATA'
-          ? 'INVESTMENTS'
-          : 'BANKS';
+            ? 'INVESTMENTS'
+            : 'BANKS';
       if (providerCategory !== 'ALL' && cat !== providerCategory) return false;
       if (!q) return true;
       return (
@@ -567,7 +698,21 @@ export const SettingsView: React.FC<{
     SUPPORTED_CURRENCIES.find((c) => c.code === family.baseCurrency) ?? {
       code: family.baseCurrency,
       name: family.baseCurrency,
+      nativeName: family.baseCurrency,
     };
+
+  const applyIndonesianDefaults = async () => {
+    setLocale('id');
+    updatePref('language', 'id');
+    updatePref('timezone', '(+07:00) Jakarta (WIB)');
+    updatePref('dateFormat', 'DD/MM/YYYY');
+    updatePref('country', 'ID');
+    await updateFamilySettings({
+      locale: 'id-ID',
+      dateFormat: 'DD/MM/YYYY',
+      baseCurrency: 'IDR',
+    });
+  };
 
   return (
     <div className="flex flex-col md:flex-row gap-6 md:gap-8 min-h-[75vh]">
@@ -592,7 +737,7 @@ export const SettingsView: React.FC<{
             {SETTINGS_NAV_GROUPS.map((group) => (
               <div key={group.heading} className="space-y-1.5">
                 <div className="px-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  {group.heading}
+                  {t(group.headingKey)}
                 </div>
                 <div className="space-y-0.5">
                   {group.items.map((item) => {
@@ -603,14 +748,13 @@ export const SettingsView: React.FC<{
                         key={item.id}
                         type="button"
                         onClick={() => setActiveSection(item.id)}
-                        className={`w-full flex items-center gap-2.5 px-2.5 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer text-left ${
-                          active
-                            ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-primary)] shadow-xs'
-                            : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] border border-transparent'
-                        }`}
+                        className={`w-full flex items-center gap-2.5 px-2.5 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer text-left ${active
+                          ? 'bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-primary)] shadow-xs'
+                          : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] border border-transparent'
+                          }`}
                       >
                         <Icon className="w-4 h-4 shrink-0" />
-                        <span>{item.label}</span>
+                        <span>{t(item.labelKey)}</span>
                       </button>
                     );
                   })}
@@ -628,7 +772,7 @@ export const SettingsView: React.FC<{
               className="w-full flex items-center gap-2.5 px-2.5 py-2 text-sm font-medium rounded-lg text-[var(--status-negative)] hover:bg-[var(--status-negative)]/10 transition-colors cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
-              <span>Logout</span>
+              <span>{t('nav.logout')}</span>
             </button>
           </div>
         )}
@@ -640,7 +784,7 @@ export const SettingsView: React.FC<{
         <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-[var(--border-primary)]">
           <div>
             <h1 className="text-xl font-semibold text-[var(--text-primary)]">
-              {activeNavItem.label}
+              {t(activeNavItem.labelKey)}
             </h1>
             {activeNavItem.subtitle && (
               <p className="text-sm text-[var(--text-secondary)] mt-1">{activeNavItem.subtitle}</p>
@@ -667,23 +811,23 @@ export const SettingsView: React.FC<{
           {(activeSection === 'categories' ||
             activeSection === 'tags' ||
             activeSection === 'merchants') && (
-            <Button
-              size="sm"
-              icon={<Plus className="w-4 h-4" />}
-              onClick={() =>
-                setTxActionTrigger((prev) => ({
-                  section: activeSection,
-                  tick: (prev?.tick ?? 0) + 1,
-                }))
-              }
-            >
-              {activeSection === 'categories'
-                ? 'New category'
-                : activeSection === 'tags'
-                ? 'New tag'
-                : 'New merchant'}
-            </Button>
-          )}
+              <Button
+                size="sm"
+                icon={<Plus className="w-4 h-4" />}
+                onClick={() =>
+                  setTxActionTrigger((prev) => ({
+                    section: activeSection,
+                    tick: (prev?.tick ?? 0) + 1,
+                  }))
+                }
+              >
+                {activeSection === 'categories'
+                  ? 'New category'
+                  : activeSection === 'tags'
+                    ? 'New tag'
+                    : 'New merchant'}
+              </Button>
+            )}
 
           {activeSection === 'api_keys' && (
             <Button
@@ -772,9 +916,8 @@ export const SettingsView: React.FC<{
                                   onOpenAccount(acc.id);
                                 }
                               }}
-                              className={`flex items-center gap-3 min-w-0 flex-1 ${
-                                onOpenAccount ? 'cursor-pointer' : ''
-                              }`}
+                              className={`flex items-center gap-3 min-w-0 flex-1 ${onOpenAccount ? 'cursor-pointer' : ''
+                                }`}
                             >
                               <CategoryIcon
                                 icon={acc.icon || 'Wallet'}
@@ -947,10 +1090,10 @@ export const SettingsView: React.FC<{
                     adapter.category === 'BANKING'
                       ? 'Bank'
                       : adapter.category === 'CRYPTO'
-                      ? 'Crypto'
-                      : adapter.category === 'BROKERAGE'
-                      ? 'Investments'
-                      : 'Market Data';
+                        ? 'Crypto'
+                        : adapter.category === 'BROKERAGE'
+                          ? 'Investments'
+                          : 'Market Data';
                   return (
                     <div
                       key={adapter.key}
@@ -1006,27 +1149,49 @@ export const SettingsView: React.FC<{
         {/* 3. PREFERENCES (Matches Sure Screenshots 4 & 5) */}
         {activeSection === 'preferences' && (
           <div className="space-y-5">
-            <Card title="General" subtitle="Configure your preferences">
+            <Card title={t('prefs.general.title')} subtitle={t('prefs.general.subtitle')}>
               <div className="space-y-3.5">
                 <div className="rounded-lg border border-[var(--border-primary)] px-3.5 py-2 bg-[var(--bg-surface)]">
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
-                    Language
+                    {t('prefs.language')}
                   </label>
                   <select
-                    value={prefs.language}
-                    onChange={(e) => updatePref('language', e.target.value)}
+                    value={normalizeLocaleCode(locale || prefs.language)}
+                    onChange={(e) => {
+                      const nextLang = e.target.value;
+                      updatePref('language', nextLang);
+                      setLocale(nextLang);
+                      void updateFamilySettings({ locale: getLocaleConfig(nextLang).bcp47 });
+                    }}
                     className="w-full bg-transparent text-sm text-[var(--text-primary)] focus:outline-none cursor-pointer"
                   >
-                    <option value="en">English (en)</option>
-                    <option value="es">Español (es)</option>
-                    <option value="fr">Français (fr)</option>
-                    <option value="de">Deutsch (de)</option>
+                    {SUPPORTED_LANGUAGES.map((lang) => (
+                      <option key={lang.code} value={lang.code}>
+                        {lang.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
+                {locale === 'id' &&
+                  (family.baseCurrency !== 'IDR' ||
+                    prefs.country !== 'ID' ||
+                    prefs.dateFormat !== 'DD/MM/YYYY') && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs">
+                      <span className="text-[var(--text-primary)]">
+                        Terapkan standar Indonesia penuh (<strong>IDR</strong>,{' '}
+                        <strong>Jakarta WIB</strong>, <strong>DD/MM/YYYY</strong>,{' '}
+                        <strong>Indonesia</strong>)?
+                      </span>
+                      <Button size="sm" onClick={() => void applyIndonesianDefaults()}>
+                        Terapkan Default ID & IDR
+                      </Button>
+                    </div>
+                  )}
+
                 <div className="rounded-lg border border-[var(--border-primary)] px-3.5 py-2 bg-[var(--bg-surface)]">
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
-                    Timezone
+                    {t('prefs.timezone')}
                   </label>
                   <select
                     value={prefs.timezone}
@@ -1038,21 +1203,29 @@ export const SettingsView: React.FC<{
                     <option value="(-05:00) Eastern Time">(-05:00) Eastern Time</option>
                     <option value="(+00:00) UTC">(+00:00) UTC</option>
                     <option value="(+01:00) Berlin">(+01:00) Berlin</option>
+                    <option value="(+07:00) Jakarta (WIB)">(+07:00) Jakarta (WIB)</option>
                     <option value="(+07:00) Bangkok / Jakarta">(+07:00) Bangkok / Jakarta</option>
+                    <option value="(+08:00) Makassar (WITA)">(+08:00) Makassar (WITA)</option>
                     <option value="(+08:00) Singapore">(+08:00) Singapore</option>
+                    <option value="(+09:00) Jayapura (WIT)">(+09:00) Jayapura (WIT)</option>
                   </select>
                 </div>
 
                 <div className="rounded-lg border border-[var(--border-primary)] px-3.5 py-2 bg-[var(--bg-surface)]">
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
-                    Date format
+                    {t('prefs.dateFormat')}
                   </label>
                   <select
                     value={prefs.dateFormat}
-                    onChange={(e) => updatePref('dateFormat', e.target.value)}
+                    onChange={(e) => {
+                      const nextFmt = e.target.value;
+                      updatePref('dateFormat', nextFmt);
+                      void updateFamilySettings({ dateFormat: nextFmt });
+                    }}
                     className="w-full bg-transparent text-sm text-[var(--text-primary)] focus:outline-none cursor-pointer"
                   >
                     <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                    <option value="DD/MM/YYYY">DD/MM/YYYY</option>
                     <option value="MM/DD/YYYY">MM/DD/YYYY</option>
                     <option value="DD.MM.YYYY">DD.MM.YYYY</option>
                   </select>
@@ -1060,13 +1233,14 @@ export const SettingsView: React.FC<{
 
                 <div className="rounded-lg border border-[var(--border-primary)] px-3.5 py-2 bg-[var(--bg-surface)]">
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
-                    Country
+                    {t('prefs.country')}
                   </label>
                   <select
                     value={prefs.country}
                     onChange={(e) => updatePref('country', e.target.value)}
                     className="w-full bg-transparent text-sm text-[var(--text-primary)] focus:outline-none cursor-pointer"
                   >
+                    <option value="ID">ID — Indonesia</option>
                     <option value="US">US — United States</option>
                     <option value="GB">GB — United Kingdom</option>
                     <option value="CA">CA — Canada</option>
@@ -1077,16 +1251,16 @@ export const SettingsView: React.FC<{
                 </div>
 
                 <p className="text-xs italic text-[var(--text-muted)]">
-                  Please note, localization translations are applied progressively across modules.
+                  {t('prefs.translationNote')}
                 </p>
               </div>
             </Card>
 
-            <Card title="Budget" subtitle="Configure how your budgets behave">
+            <Card title={t('prefs.budget.title')} subtitle={t('prefs.budget.subtitle')}>
               <div className="space-y-3.5">
                 <div className="rounded-lg border border-[var(--border-primary)] px-3.5 py-2 bg-[var(--bg-surface)]">
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
-                    Budget month starts on
+                    {t('prefs.budget.startDay')}
                   </label>
                   <select
                     value={prefs.budgetStartDay}
@@ -1113,23 +1287,23 @@ export const SettingsView: React.FC<{
               </div>
             </Card>
 
-            <Card title="Family Currencies" subtitle="Choose which currencies appear in money fields for your family">
+            <Card title={t('prefs.currencies.title')} subtitle={t('prefs.currencies.subtitle')}>
               <div className="space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-surface-subtle)] p-4">
                   <div>
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">
-                      BASE CURRENCY
+                      {t('prefs.currencies.base')}
                     </div>
                     <div className="text-sm font-semibold text-[var(--text-primary)]">
                       {currentCurrencyObj.code}
                     </div>
                     <div className="text-xs text-[var(--text-secondary)]">
-                      {currentCurrencyObj.name}
+                      {locale === 'id' ? currentCurrencyObj.nativeName : currentCurrencyObj.name}
                     </div>
                   </div>
                   <div>
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">
-                      ADDITIONAL CURRENCIES
+                      {t('prefs.currencies.additional')}
                     </div>
                     <div className="flex flex-wrap gap-1.5">
                       {prefs.additionalCurrencies.length === 0 ? (
@@ -1150,13 +1324,13 @@ export const SettingsView: React.FC<{
 
                 <div className="flex justify-end">
                   <Button size="sm" onClick={() => setCurrencyModalOpen(true)}>
-                    Manage currencies
+                    {t('prefs.currencies.manage')}
                   </Button>
                 </div>
               </div>
             </Card>
 
-            <Card title="Family Sharing" subtitle="Control how accounts and AI consent are shared in your family">
+            <Card title={t('prefs.sharing.title')} subtitle={t('prefs.sharing.subtitle')}>
               <div className="space-y-4">
                 <div className="rounded-lg border border-[var(--border-primary)] px-3.5 py-2 bg-[var(--bg-surface)]">
                   <label className="block text-[11px] font-medium text-[var(--text-secondary)] mb-0.5">
@@ -1226,11 +1400,10 @@ export const SettingsView: React.FC<{
                       key={opt.id}
                       type="button"
                       onClick={() => setTheme(opt.id)}
-                      className={`text-center p-2.5 rounded-xl border transition-colors cursor-pointer ${
-                        active
-                          ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)] bg-[var(--bg-surface-subtle)]'
-                          : 'border-[var(--border-primary)] hover:bg-[var(--bg-surface-hover)]'
-                      }`}
+                      className={`text-center p-2.5 rounded-xl border transition-colors cursor-pointer ${active
+                        ? 'border-[var(--accent-primary)] ring-1 ring-[var(--accent-primary)] bg-[var(--bg-surface-subtle)]'
+                        : 'border-[var(--border-primary)] hover:bg-[var(--bg-surface-hover)]'
+                        }`}
                     >
                       <img
                         src={opt.preview}
@@ -1641,15 +1814,142 @@ export const SettingsView: React.FC<{
               </form>
             </Card>
 
-            <Card title="Connected Accounts" subtitle="Manage your single sign-on account connections">
-              <div className="py-6 flex flex-col items-center text-center space-y-2">
-                <Link2 className="w-6 h-6 text-[var(--text-muted)]" />
-                <div className="text-sm font-medium text-[var(--text-primary)]">
-                  No SSO accounts connected
+            <Card
+              title="Passkeys (WebAuthn)"
+              subtitle="Use Touch ID, Face ID, Windows Hello, or a hardware security key for passwordless sign-in and two-factor authentication"
+            >
+              <div className="space-y-3.5">
+                {passkeyStatus && (
+                  <Alert
+                    variant={passkeyStatus.kind === 'success' ? 'success' : 'error'}
+                    title={passkeyStatus.kind === 'success' ? 'Passkey Updated' : 'Passkey Error'}
+                  >
+                    {passkeyStatus.text}
+                  </Alert>
+                )}
+
+                {(session?.user.passkeys?.length ?? 0) > 0 && (
+                  <div className="space-y-2">
+                    {session!.user.passkeys!.map((pk) => (
+                      <div
+                        key={pk.id}
+                        className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-surface-subtle)]"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="w-8 h-8 rounded-full bg-[var(--bg-surface)] border border-[var(--border-primary)] flex items-center justify-center text-[var(--text-secondary)] shrink-0">
+                            <Fingerprint className="w-4 h-4" />
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-sm font-medium text-[var(--text-primary)] truncate">
+                              {pk.name}
+                            </div>
+                            <div className="text-[11px] text-[var(--text-muted)] font-mono-tabular">
+                              Registered {pk.createdAt.slice(0, 10)} • Sign-ins: {pk.counter}
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={passkeyBusy}
+                          onClick={() => void handleDeletePasskey(pk.id)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-[var(--status-negative)]" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <form onSubmit={handleRegisterPasskey} className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={passkeyNameDraft}
+                    onChange={(e) => setPasskeyNameDraft(e.target.value)}
+                    placeholder="Device name (e.g. Windows Hello, YubiKey)"
+                    className="flex-1 min-w-[200px] px-3 py-2 text-xs rounded-lg bg-[var(--bg-surface)] border border-[var(--border-strong)]"
+                  />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={passkeyBusy}
+                    icon={<Fingerprint className="w-3.5 h-3.5" />}
+                  >
+                    {passkeyBusy ? 'Waiting for prompt...' : 'Add Passkey'}
+                  </Button>
+                  {(session?.user.passkeys?.length ?? 0) > 0 && !session?.user.mfaEnabled && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={passkeyBusy}
+                      onClick={() => void handleEnablePasskeyMfa()}
+                    >
+                      Enable Passkey MFA
+                    </Button>
+                  )}
+                </form>
+              </div>
+            </Card>
+
+            <Card
+              title="Connected Accounts (OAuth 2.0)"
+              subtitle="Single sign-on status and PKCE callback URIs for external identity providers"
+            >
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-surface-subtle)]">
+                  <div>
+                    <div className="text-sm font-medium text-[var(--text-primary)]">Google OAuth</div>
+                    <div className="text-[11px] text-[var(--text-muted)] font-mono-tabular break-all">
+                      Callback: {oauthProviders?.googleRedirectUri || '/api/v1/auth/oauth/google/callback'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Pill
+                      size="xs"
+                      color={oauthProviders?.google ? '#078C52' : '#64748b'}
+                      label={oauthProviders?.google ? 'Configured' : 'Set GOOGLE_CLIENT_ID in .env'}
+                    />
+                    {oauthProviders?.google && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          window.location.href = '/api/v1/auth/oauth/google/start';
+                        }}
+                      >
+                        Link / Test
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <p className="text-xs text-[var(--text-secondary)] max-w-md">
-                  Sign in uses email, password, and optional TOTP verification. Manage developer API keys under Advanced.
-                </p>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-surface-subtle)]">
+                  <div>
+                    <div className="text-sm font-medium text-[var(--text-primary)]">GitHub OAuth</div>
+                    <div className="text-[11px] text-[var(--text-muted)] font-mono-tabular break-all">
+                      Callback: {oauthProviders?.githubRedirectUri || '/api/v1/auth/oauth/github/callback'}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Pill
+                      size="xs"
+                      color={oauthProviders?.github ? '#078C52' : '#64748b'}
+                      label={oauthProviders?.github ? 'Configured' : 'Set GITHUB_CLIENT_ID in .env'}
+                    />
+                    {oauthProviders?.github && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          window.location.href = '/api/v1/auth/oauth/github/start';
+                        }}
+                      >
+                        Link / Test
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
             </Card>
           </div>
@@ -1663,13 +1963,13 @@ export const SettingsView: React.FC<{
           activeSection === 'recurring' ||
           activeSection === 'auto_matches' ||
           activeSection === 'statement_vault') && (
-          <TransactionsSettingsSections
-            activeSection={activeSection}
-            enableAutoMatch={prefs.enableAutoMatch}
-            onToggleAutoMatch={(v) => updatePref('enableAutoMatch', v)}
-            actionTriggerCounter={txActionTrigger}
-          />
-        )}
+            <TransactionsSettingsSections
+              activeSection={activeSection}
+              enableAutoMatch={prefs.enableAutoMatch}
+              onToggleAutoMatch={(v) => updatePref('enableAutoMatch', v)}
+              actionTriggerCounter={txActionTrigger}
+            />
+          )}
 
         {/* 8. ADVANCED SETTINGS (AI Prompts, Classifier, LLM Usage, API Keys, MCP, Imports, Exports) */}
         {(activeSection === 'ai_prompts' ||
@@ -1679,19 +1979,19 @@ export const SettingsView: React.FC<{
           activeSection === 'mcp' ||
           activeSection === 'imports' ||
           activeSection === 'exports') && (
-          <AdvancedSettingsSections
-            activeSection={activeSection}
-            actionTriggerCounter={advActionTrigger}
-            onNavigateToImports={onNavigateToImports}
-          />
-        )}
+            <AdvancedSettingsSections
+              activeSection={activeSection}
+              actionTriggerCounter={advActionTrigger}
+              onNavigateToImports={onNavigateToImports}
+            />
+          )}
 
         {/* 9. MORE SETTINGS (Guides, What's new, Feedback) */}
         {(activeSection === 'guides' ||
           activeSection === 'whats_new' ||
           activeSection === 'feedback') && (
-          <MoreSettingsSections activeSection={activeSection} />
-        )}
+            <MoreSettingsSections activeSection={activeSection} />
+          )}
 
         {/* Bottom Prev / Next Section Navigation (Matches Sure Screenshots) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
@@ -1699,15 +1999,14 @@ export const SettingsView: React.FC<{
             <button
               type="button"
               onClick={() => setActiveSection(prevNavItem.id)}
-              className={`flex items-center justify-between px-4 py-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-left cursor-pointer ${
-                !nextNavItem ? 'sm:col-span-2' : ''
-              }`}
+              className={`flex items-center justify-between px-4 py-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-left cursor-pointer ${!nextNavItem ? 'sm:col-span-2' : ''
+                }`}
             >
               <ArrowLeft className="w-4 h-4 text-[var(--text-secondary)]" />
               <div className="text-right">
-                <div className="text-[11px] text-[var(--text-secondary)]">Back</div>
+                <div className="text-[11px] text-[var(--text-secondary)]">{t('nav.back')}</div>
                 <div className="text-sm font-medium text-[var(--text-primary)]">
-                  {prevNavItem.label}
+                  {t(prevNavItem.labelKey)}
                 </div>
               </div>
             </button>
@@ -1722,9 +2021,9 @@ export const SettingsView: React.FC<{
               className="flex items-center justify-between px-4 py-3 rounded-xl border border-[var(--border-primary)] bg-[var(--bg-surface)] hover:bg-[var(--bg-surface-hover)] text-left cursor-pointer"
             >
               <div>
-                <div className="text-[11px] text-[var(--text-secondary)]">Next</div>
+                <div className="text-[11px] text-[var(--text-secondary)]">{t('nav.next')}</div>
                 <div className="text-sm font-medium text-[var(--text-primary)]">
-                  {nextNavItem.label}
+                  {t(nextNavItem.labelKey)}
                 </div>
               </div>
               <ArrowRight className="w-4 h-4 text-[var(--text-secondary)]" />
@@ -1858,7 +2157,7 @@ export const SettingsView: React.FC<{
             >
               {SUPPORTED_CURRENCIES.map((c) => (
                 <option key={c.code} value={c.code}>
-                  {c.name}
+                  {locale === 'id' ? c.nativeName : c.name}
                 </option>
               ))}
             </select>
@@ -1876,11 +2175,10 @@ export const SettingsView: React.FC<{
                     key={c.code}
                     type="button"
                     onClick={() => toggleAdditionalCurrency(c.code)}
-                    className={`px-2.5 py-1 rounded-md text-xs font-mono-tabular border cursor-pointer ${
-                      selected
-                        ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-fg)] border-transparent'
-                        : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] border-[var(--border-primary)]'
-                    }`}
+                    className={`px-2.5 py-1 rounded-md text-xs font-mono-tabular border cursor-pointer ${selected
+                      ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-fg)] border-transparent'
+                      : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] border-[var(--border-primary)]'
+                      }`}
                   >
                     {c.code}
                   </button>
