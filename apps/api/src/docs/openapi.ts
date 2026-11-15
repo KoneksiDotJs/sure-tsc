@@ -1185,6 +1185,19 @@ export function getOpenApiSpec(): OpenApiDocument {
           responses: okJson(),
         },
       },
+      '/api/v1/ai/usage': {
+        get: {
+          operationId: 'getAiLlmUsage',
+          summary: 'Retrieve LLM token telemetry, recent requests, and estimated costs scoped by familyId',
+          tags: ['AI'],
+          parameters: [
+            { name: 'startDate', in: 'query', required: false, schema: { type: 'string', format: 'date' } },
+            { name: 'endDate', in: 'query', required: false, schema: { type: 'string', format: 'date' } },
+            { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 200 } },
+          ],
+          responses: okJson(),
+        },
+      },
 
       // MCP
       '/api/v1/mcp': {

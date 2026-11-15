@@ -289,6 +289,27 @@ export const EN_MESSAGES = {
   'common.done': 'Done',
   'common.cancel': 'Cancel',
   'common.save': 'Save',
+
+  'llmUsage.pageTitle': 'LLM Usage & Costs',
+  'llmUsage.subtitle': 'Track your AI usage and estimated costs',
+  'llmUsage.startDate': 'Start Date',
+  'llmUsage.endDate': 'End Date',
+  'llmUsage.filter': 'Filter',
+  'llmUsage.totalRequests': 'Total Requests',
+  'llmUsage.totalTokens': 'Total Tokens',
+  'llmUsage.totalCost': 'Total Cost',
+  'llmUsage.avgCostPerRequest': 'Avg Cost/Request',
+  'llmUsage.recentUsage': 'Recent Usage',
+  'llmUsage.colDate': 'Date',
+  'llmUsage.colOperation': 'Operation',
+  'llmUsage.colModel': 'Model',
+  'llmUsage.colTokens': 'Tokens',
+  'llmUsage.colCost': 'Cost',
+  'llmUsage.emptyTitle': 'No LLM requests recorded in this date range',
+  'llmUsage.emptyHint': 'Send a message in Sure AI Assistant or run Test Connection to record token telemetry.',
+  'llmUsage.aboutTitle': 'About Cost Estimates',
+  'llmUsage.aboutBody':
+    'Costs are estimated from published provider pricing last verified on 2026-10-17. Actual costs may vary. Pricing is per 1 million tokens and varies by model. Custom or self-hosted models will show "N/A" and are not included in cost totals.',
 } as const;
 
 export type TranslationKey = keyof typeof EN_MESSAGES;
@@ -367,6 +388,27 @@ export const ID_MESSAGES: Record<TranslationKey, string> = {
   'common.done': 'Selesai',
   'common.cancel': 'Batal',
   'common.save': 'Simpan',
+
+  'llmUsage.pageTitle': 'Penggunaan & Biaya LLM',
+  'llmUsage.subtitle': 'Lacak penggunaan AI dan estimasi biaya Anda',
+  'llmUsage.startDate': 'Tanggal Mulai',
+  'llmUsage.endDate': 'Tanggal Akhir',
+  'llmUsage.filter': 'Filter',
+  'llmUsage.totalRequests': 'Total Permintaan',
+  'llmUsage.totalTokens': 'Total Token',
+  'llmUsage.totalCost': 'Total Biaya',
+  'llmUsage.avgCostPerRequest': 'Rata-rata Biaya/Permintaan',
+  'llmUsage.recentUsage': 'Penggunaan Terbaru',
+  'llmUsage.colDate': 'Tanggal',
+  'llmUsage.colOperation': 'Operasi',
+  'llmUsage.colModel': 'Model',
+  'llmUsage.colTokens': 'Token',
+  'llmUsage.colCost': 'Biaya',
+  'llmUsage.emptyTitle': 'Belum ada permintaan LLM pada rentang tanggal ini',
+  'llmUsage.emptyHint': 'Kirim pesan di Asisten AI Sure atau jalankan Tes Koneksi untuk mencatat telemetri token.',
+  'llmUsage.aboutTitle': 'Tentang Estimasi Biaya',
+  'llmUsage.aboutBody':
+    'Biaya diestimasi berdasarkan harga resmi penyedia yang terakhir diverifikasi pada 2026-10-17. Biaya aktual dapat berbeda. Tarif dihitung per 1 juta token dan bervariasi tiap model. Model kustom atau self-hosted akan menampilkan "N/A" dan tidak dihitung dalam total biaya.',
 };
 
 export function translate(locale: string | null | undefined, key: TranslationKey): string {

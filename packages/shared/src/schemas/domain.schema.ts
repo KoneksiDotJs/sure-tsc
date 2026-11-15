@@ -209,6 +209,40 @@ export const AiChatMessageInputSchema = z.object({
   systemPrompt: z.string().max(4000).optional(),
 });
 
+export const LlmUsageQuerySchema = z.object({
+  startDate: IsoDateStringSchema.optional(),
+  endDate: IsoDateStringSchema.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+});
+
+export interface LlmUsageEventDto {
+  id: string;
+  operation: string;
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: string | null;
+  createdAt: string;
+}
+
+export interface LlmUsageReportDto {
+  startDate: string;
+  endDate: string;
+  pricingVerifiedAt: string;
+  summary: {
+    totalRequests: number;
+    requestsWithCostData: number;
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+    totalTokens: number;
+    totalCostUsd: string;
+    avgCostPerRequestUsd: string;
+  };
+  events: LlmUsageEventDto[];
+}
+
 export type CreateCategoryInput = z.infer<typeof CreateCategorySchema>;
 export type CreateMerchantInput = z.infer<typeof CreateMerchantSchema>;
 export type CreateTagInput = z.infer<typeof CreateTagSchema>;
@@ -222,3 +256,4 @@ export type ResolveFinancekitConflictInput = z.infer<typeof ResolveFinancekitCon
 export type AiProvider = z.infer<typeof AiProviderEnum>;
 export type AiConfigUpdateInput = z.infer<typeof AiConfigUpdateSchema>;
 export type AiChatMessageInput = z.infer<typeof AiChatMessageInputSchema>;
+export type LlmUsageQueryInput = z.infer<typeof LlmUsageQuerySchema>;

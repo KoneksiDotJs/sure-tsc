@@ -634,4 +634,71 @@ describe('PostgreSQL API Integration Tests — Auth, Tenant Isolation, Ledger In
       .set('Authorization', `Bearer ${family.authToken}`);
     expect(delGoalRes.status).toBe(204);
   });
+
+  it('13. Enforces tenant isolation and Decimal cost aggregation on GET /api/v1/ai/usage', async () => {
+    const family1 = await createTestFamily({ name: 'LLM Usage Family 1' });
+    const family2 = await createTestFamily({ name: 'LLM Usage Family 2' });
+    const today = new Date().toISOString().slice(0, 10);
+
+    await prisma.llmUsageEvent.createMany({
+      data: [
+        {
+          familyId: family1.familyId,
+          userId: family1.userId,
+          operation: 'Chat',
+          provider: 'openrouter',
+          model: '@cf/moonshotai/kimi-k2.5',
+          promptTokens: 16686,
+          completionTokens: 1163,
+          totalTokens: 17849,
+          estimatedCostUsd: null,
+        },
+        {
+          familyId: family1.familyId,
+          userId: family1.userId,
+          operation: 'Chat',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          promptTokens: 15333,
+          completionTokens: 73,
+          totalTokens: 15406,
+          estimatedCostUsd: '0.0023',
+        },
+        {
+          familyId: family2.familyId,
+          userId: family2.userId,
+          operation: 'Chat',
+          provider: 'openai',
+          model: 'gpt-4o',
+          promptTokens: 5000,
+          completionTokens: 500,
+          totalTokens: 5500,
+          estimatedCostUsd: '0.0175',
+        },
+      ],
+    });
+
+    const f1Res = await request(app)
+      .get(`/api/v1/ai/usage?startDate=${today}&endDate=${today}`)
+      .set('Authorization', `Bearer ${family1.authToken}`);
+    expect(f1Res.status).toBe(200);
+    expect(f1Res.body.data.summary.totalRequests).toBe(2);
+    expect(f1Res.body.data.summary.requestsWithCostData).toBe(1);
+    expect(f1Res.body.data.summary.totalPromptTokens).toBe(32019);
+    expect(f1Res.body.data.summary.totalCompletionTokens).toBe(1236);
+    expect(f1Res.body.data.summary.totalTokens).toBe(33255);
+    expect(f1Res.body.data.summary.totalCostUsd).toBe('0.00');
+    expect(f1Res.body.data.summary.avgCostPerRequestUsd).toBe('0.0023');
+    expect(f1Res.body.data.events).toHaveLength(2);
+    expect(
+      f1Res.body.data.events.some((e: { model: string }) => e.model === 'gpt-4o')
+    ).toBe(false);
+
+    const f2Res = await request(app)
+      .get(`/api/v1/ai/usage?startDate=${today}&endDate=${today}`)
+      .set('Authorization', `Bearer ${family2.authToken}`);
+    expect(f2Res.status).toBe(200);
+    expect(f2Res.body.data.summary.totalRequests).toBe(1);
+    expect(f2Res.body.data.summary.totalTokens).toBe(5500);
+  });
 });

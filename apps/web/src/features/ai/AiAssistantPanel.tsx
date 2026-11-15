@@ -286,6 +286,9 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
     void apiRequest<ActiveAiConfigSummary>('/api/v1/ai/config')
       .then(setActiveAiConfig)
       .catch(() => null);
+    if (typeof window !== 'undefined' && messages.length > 0) {
+      window.dispatchEvent(new CustomEvent('sure:ai-usage-updated'));
+    }
   }, [aiEnabled, messages.length]);
 
   useEffect(() => {

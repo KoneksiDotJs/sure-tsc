@@ -1,4 +1,4 @@
-import { addMoney, absMoney, compareMoney, AiConfigUpdateInput } from '@sure/shared';
+import { addMoney, absMoney, compareMoney, AiConfigUpdateInput, LlmUsageQueryInput } from '@sure/shared';
 import { decimalToFixed, prisma } from '../../config/prisma.js';
 import { AppError } from '../../middleware/pipeline.js';
 import { accountsService } from '../accounts/accounts.service.js';
@@ -10,6 +10,7 @@ import {
   resolveAiRuntimeConfig,
   updateFamilyAiConfig,
 } from './ai.providers.js';
+import { estimateLlmCostUsd, summarizeLlmUsage } from './ai.usage.js';
 
 /**
  * FR-7.1 Local Naive Bayes Classifier (`BayesCategorizer`)
@@ -156,6 +157,14 @@ export class AiService {
               systemPrompt: `${sysPrompt}\nAvailable categories: ${catNames}`,
               userPrompt: JSON.stringify(promptPayload),
             });
+            await this.recordLlmUsage({
+              familyId,
+              operation: 'Categorize',
+              provider: completion.provider,
+              model: completion.model,
+              promptTokens: completion.usage?.promptTokens ?? 0,
+              completionTokens: completion.usage?.completionTokens ?? 0,
+            });
             const jsonMatch = completion.text.match(/\[[\s\S]*\]/);
             if (jsonMatch) {
               const parsed = JSON.parse(jsonMatch[0]) as Array<{
@@ -212,6 +221,84 @@ export class AiService {
     return { categorizedCount: categorized.length, items: categorized };
   }
 
+  private async recordLlmUsage(params: {
+    familyId: string;
+    userId?: string;
+    operation: 'Chat' | 'Categorize' | 'Test';
+    provider: string;
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+  }) {
+    const promptTokens = Math.max(0, Math.trunc(params.promptTokens));
+    const completionTokens = Math.max(0, Math.trunc(params.completionTokens));
+    const totalTokens = promptTokens + completionTokens;
+    const estimatedCostUsd = estimateLlmCostUsd({
+      provider: params.provider,
+      model: params.model,
+      promptTokens,
+      completionTokens,
+    });
+
+    try {
+      await prisma.llmUsageEvent.create({
+        data: {
+          familyId: params.familyId,
+          userId: params.userId,
+          operation: params.operation,
+          provider: params.provider,
+          model: params.model,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          estimatedCostUsd,
+        },
+      });
+    } catch {
+      // Usage telemetry failure must not block user-facing AI completions
+    }
+  }
+
+  public async getLlmUsage(familyId: string, query?: LlmUsageQueryInput) {
+    const now = new Date();
+    const defaultEnd = now.toISOString().slice(0, 10);
+    const thirtyDaysAgo = new Date(now);
+    thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
+    const defaultStart = thirtyDaysAgo.toISOString().slice(0, 10);
+
+    const startDate = query?.startDate ?? defaultStart;
+    const endDate = query?.endDate ?? defaultEnd;
+    const limit = query?.limit ?? 50;
+
+    const gte = new Date(`${startDate}T00:00:00.000Z`);
+    const lte = new Date(`${endDate}T23:59:59.999Z`);
+
+    const rows = await prisma.llmUsageEvent.findMany({
+      where: {
+        familyId,
+        createdAt: { gte, lte },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return summarizeLlmUsage(
+      rows.map((r) => ({
+        id: r.id,
+        operation: r.operation,
+        provider: r.provider,
+        model: r.model,
+        promptTokens: r.promptTokens,
+        completionTokens: r.completionTokens,
+        totalTokens: r.totalTokens,
+        estimatedCostUsd: r.estimatedCostUsd ? decimalToFixed(r.estimatedCostUsd) : null,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      startDate,
+      endDate
+    );
+  }
+
   public async listAiModels(familyId: string, override?: Partial<AiConfigUpdateInput>) {
     return fetchProviderModels(familyId, override);
   }
@@ -235,6 +322,14 @@ export class AiService {
         runtime,
         systemPrompt: 'You are a helpful financial assistant. Reply briefly with OK.',
         userPrompt: 'Ping connection check.',
+      });
+      await this.recordLlmUsage({
+        familyId,
+        operation: 'Test',
+        provider: result.provider,
+        model: result.model,
+        promptTokens: result.usage?.promptTokens ?? 0,
+        completionTokens: result.usage?.completionTokens ?? 0,
       });
       return {
         ok: true,
@@ -319,6 +414,7 @@ export class AiService {
 
     const runtime = resolveAiRuntimeConfig(familyId);
     let assistantReply = fallbackReply;
+    let completionTotalTokens = 0;
 
     if (runtime.apiKey || !runtime.preset.requiresKey) {
       const topCategories = report.incomeStatement.expenseBreakdown
@@ -353,12 +449,24 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
           systemPrompt: groundedSystemPrompt,
           userPrompt: prompt,
         });
+        const promptTokens = completion.usage?.promptTokens ?? 0;
+        const completionTokens = completion.usage?.completionTokens ?? 0;
+        completionTotalTokens = promptTokens + completionTokens;
+        await this.recordLlmUsage({
+          familyId,
+          userId,
+          operation: 'Chat',
+          provider: completion.provider,
+          model: completion.model,
+          promptTokens,
+          completionTokens,
+        });
         assistantReply = completion.text;
         toolCalls.push({
           toolName: `llm_${completion.provider}`,
           args: { model: completion.model },
           resultSummary: completion.usage
-            ? `${completion.usage.promptTokens + completion.usage.completionTokens} tokens (${completion.model})`
+            ? `${completionTotalTokens} tokens (${completion.model})`
             : `Responded via ${completion.model}`,
         });
       } catch (err) {
@@ -376,6 +484,7 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
         familyId,
         userId,
         title: prompt.slice(0, 50),
+        tokenCount: completionTotalTokens,
         messages: {
           create: [
             {

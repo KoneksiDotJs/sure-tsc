@@ -100,6 +100,7 @@ type SettingsSectionId =
 interface SettingsNavItem {
   id: SettingsSectionId;
   labelKey: TranslationKey;
+  pageTitleKey?: TranslationKey;
   label: string;
   subtitle?: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -223,8 +224,8 @@ const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
       {
         id: 'llm_usage',
         labelKey: 'settings.item.llm_usage',
+        pageTitleKey: 'llmUsage.pageTitle',
         label: 'LLM Usage',
-        subtitle: 'Track your AI usage and estimated costs',
         icon: Activity,
       },
       {
@@ -784,7 +785,7 @@ export const SettingsView: React.FC<{
         <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-[var(--border-primary)]">
           <div>
             <h1 className="text-xl font-semibold text-[var(--text-primary)]">
-              {t(activeNavItem.labelKey)}
+              {t(activeNavItem.pageTitleKey ?? activeNavItem.labelKey)}
             </h1>
             {activeNavItem.subtitle && (
               <p className="text-sm text-[var(--text-secondary)] mt-1">{activeNavItem.subtitle}</p>

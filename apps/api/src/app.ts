@@ -17,6 +17,7 @@ import {
   ResolveFinancekitConflictSchema,
   AiChatMessageInputSchema,
   AiConfigUpdateSchema,
+  LlmUsageQuerySchema,
   UpdateFamilySettingsSchema,
   InviteFamilyMemberSchema,
 } from '@sure/shared';
@@ -592,6 +593,16 @@ export function createApp(): Express {
     asyncHandler(async (req, res) => {
       const data = await aiService.listAiModels(req.auth.familyId, req.body);
       res.json({ data });
+    })
+  );
+
+  app.get(
+    '/api/v1/ai/usage',
+    authenticateMiddleware,
+    validateRequest({ query: LlmUsageQuerySchema }),
+    asyncHandler(async (req, res) => {
+      const report = await aiService.getLlmUsage(req.auth.familyId, req.query);
+      res.json({ data: report });
     })
   );
 
