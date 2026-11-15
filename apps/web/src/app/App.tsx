@@ -185,12 +185,22 @@ const SureWorkspaceShell: React.FC = () => {
       familyName={family.name}
       aiEnabled={family.aiEnabled}
       darkMode={darkMode}
+      privacyEnabled={privacyEnabled}
+      activeChatId={aiChat.activeChatId}
+      activeChatTitle={aiChat.activeChatTitle}
+      chatHistory={aiChat.chatHistory}
+      isLoadingHistory={aiChat.isLoadingHistory}
+      isExporting={aiChat.isExporting}
       messages={aiChat.chatMessages}
       input={aiChat.chatInput}
       isSending={aiChat.isAiSending}
       onInputChange={aiChat.setChatInput}
       onSend={(promptOverride) => void aiChat.sendMessage(promptOverride)}
       onClearChat={aiChat.clearChat}
+      onSelectChat={(chatId) => void aiChat.selectChat(chatId)}
+      onRenameChat={aiChat.renameChat}
+      onDeleteChat={aiChat.deleteChat}
+      onExportChat={aiChat.exportChat}
       onEnableAi={() => void updateFamilySettings({ aiEnabled: true })}
       onOpenAiSettings={() => navigateTab('settings')}
       onClose={() => setShowAiSidebar(false)}

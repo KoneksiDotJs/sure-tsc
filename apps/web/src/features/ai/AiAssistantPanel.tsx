@@ -1,16 +1,24 @@
-﻿import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Button, Pill } from '@sure/ui';
+import type { AiChatExportFormat } from '@sure/shared';
 import {
   Check,
   Copy,
+  History,
   Loader2,
-  RotateCcw,
+  Plus,
   Send,
   Settings2,
   Sparkles,
   X,
 } from 'lucide-react';
 import { apiRequest } from '../../lib/api-client.js';
+import { AiExportMenu } from './components/AiExportMenu.js';
+import {
+  AiHistoryDrawer,
+  type AiChatHistorySummary,
+} from './components/AiHistoryDrawer.js';
+import { MarkdownMessageBody } from './components/MarkdownMessageBody.js';
 
 export interface AiChatMessageItem {
   id: string;
@@ -36,18 +44,30 @@ const QUICK_PROMPTS = [
   'How can I optimize my top expenses?',
 ];
 
-import { MarkdownMessageBody } from './components/MarkdownMessageBody.js';
-
 export interface AiAssistantPanelProps {
   familyName: string;
   aiEnabled: boolean;
   darkMode: boolean;
+  privacyEnabled?: boolean;
+  activeChatId?: string | null;
+  activeChatTitle?: string | null;
+  chatHistory?: AiChatHistorySummary[];
+  isLoadingHistory?: boolean;
+  isExporting?: boolean;
   messages: AiChatMessageItem[];
   input: string;
   isSending: boolean;
   onInputChange: (val: string) => void;
   onSend: (promptOverride?: string) => void;
   onClearChat: () => void;
+  onSelectChat?: (chatId: string) => void;
+  onRenameChat?: (chatId: string, title: string) => Promise<void>;
+  onDeleteChat?: (chatId: string) => Promise<void>;
+  onExportChat?: (
+    chatId: string,
+    format: AiChatExportFormat,
+    redactAmounts: boolean
+  ) => Promise<void>;
   onEnableAi: () => void;
   onOpenAiSettings?: () => void;
   onClose?: () => void;
@@ -56,12 +76,22 @@ export interface AiAssistantPanelProps {
 export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
   aiEnabled,
   darkMode,
+  privacyEnabled = false,
+  activeChatId = null,
+  activeChatTitle = null,
+  chatHistory = [],
+  isLoadingHistory = false,
+  isExporting = false,
   messages,
   input,
   isSending,
   onInputChange,
   onSend,
   onClearChat,
+  onSelectChat,
+  onRenameChat,
+  onDeleteChat,
+  onExportChat,
   onEnableAi,
   onOpenAiSettings,
   onClose,
@@ -69,6 +99,7 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
   const [activeAiConfig, setActiveAiConfig] = useState<ActiveAiConfigSummary | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const scrollEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -122,8 +153,8 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
             className="w-6 h-6 mt-0.5 shrink-0"
           />
           <div className="min-w-0">
-            <div className="text-sm font-semibold leading-tight text-[var(--text-primary)]">
-              Sure AI Assistant
+            <div className="text-sm font-semibold leading-tight text-[var(--text-primary)] truncate">
+              {activeChatTitle || 'Sure AI Assistant'}
             </div>
             <div className="mt-1 flex items-center gap-1.5 min-w-0">
               <span
@@ -146,6 +177,38 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          {onSelectChat && (
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((v) => !v)}
+              className={`relative p-1.5 rounded-md cursor-pointer ${
+                historyOpen
+                  ? 'bg-[var(--bg-surface-hover)] text-[var(--text-primary)]'
+                  : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)]'
+              }`}
+              title={`Saved chats (${chatHistory.length})`}
+              aria-label="Toggle AI chat history"
+            >
+              <History className="w-3.5 h-3.5" />
+              {chatHistory.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 rounded-full bg-[var(--accent-primary)] text-[var(--accent-primary-fg)] text-[9px] font-mono-tabular flex items-center justify-center">
+                  {chatHistory.length > 99 ? '99' : chatHistory.length}
+                </span>
+              )}
+            </button>
+          )}
+          {onExportChat && (
+            <AiExportMenu
+              disabled={!activeChatId || isSending}
+              isExporting={isExporting}
+              defaultRedact={privacyEnabled}
+              onExport={async (format, redactAmounts) => {
+                if (activeChatId) {
+                  await onExportChat(activeChatId, format, redactAmounts);
+                }
+              }}
+            />
+          )}
           {onOpenAiSettings && (
             <button
               type="button"
@@ -160,12 +223,12 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
           <button
             type="button"
             onClick={onClearChat}
-            disabled={isSending || messages.length <= 1}
+            disabled={isSending || (!activeChatId && messages.length <= 1)}
             className="p-1.5 rounded-md text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] disabled:opacity-40 cursor-pointer"
-            title="Reset conversation"
-            aria-label="Reset conversation"
+            title="Start new conversation"
+            aria-label="New conversation"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
+            <Plus className="w-3.5 h-3.5" />
           </button>
           {onClose && (
             <button
@@ -179,6 +242,26 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
           )}
         </div>
       </div>
+
+      {historyOpen && onSelectChat && (
+        <AiHistoryDrawer
+          chats={chatHistory}
+          activeChatId={activeChatId}
+          isLoading={isLoadingHistory}
+          onSelectChat={onSelectChat}
+          onNewChat={onClearChat}
+          onRenameChat={async (id, title) => {
+            if (onRenameChat) await onRenameChat(id, title);
+          }}
+          onDeleteChat={async (id) => {
+            if (onDeleteChat) await onDeleteChat(id);
+          }}
+          onQuickExportPdf={async (id) => {
+            if (onExportChat) await onExportChat(id, 'pdf', privacyEnabled);
+          }}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
 
       {/* Scrollable Conversation Area */}
       <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-3 pr-1 space-y-3">

@@ -79,3 +79,39 @@ export async function apiRequest<T>(
 
   return payload as T;
 }
+
+export async function apiDownloadBlob(
+  path: string
+): Promise<{ blob: Blob; filename?: string }> {
+  const headers = new Headers();
+  const token = getStoredToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(path, {
+    method: 'GET',
+    headers,
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') ?? '';
+    const payload = contentType.includes('application/json') ? await response.json() : null;
+    const errObj =
+      payload && typeof payload === 'object'
+        ? (payload as { error?: { code?: string; message?: string; details?: unknown } }).error
+        : undefined;
+    throw new ApiError(
+      response.status,
+      errObj?.code ?? 'API_ERROR',
+      errObj?.message ?? `Download failed with status ${response.status}`,
+      errObj?.details
+    );
+  }
+
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  const blob = await response.blob();
+  return { blob, filename: match?.[1] };
+}

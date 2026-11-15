@@ -238,10 +238,72 @@ export const planningAiMcpPaths: Record<string, Record<string, OpenApiOperationO
   '/api/v1/ai/chat': {
     post: {
       operationId: 'aiChat',
-      summary: 'Converse with the financial AI assistant scoped to family ledger context',
+      summary: 'Converse with the financial AI assistant scoped to family ledger context (creates or appends to chatId)',
       tags: ['AI'],
       requestBody: jsonRequestBody('AiChatMessageInputSchema'),
+      responses: createdJson(),
+    },
+  },
+  '/api/v1/ai/chats': {
+    get: {
+      operationId: 'listAiChats',
+      summary: 'List persisted AI financial assistant conversation threads for the family',
+      tags: ['AI'],
       responses: okJson(),
+    },
+  },
+  '/api/v1/ai/chats/{id}': {
+    get: {
+      operationId: 'getAiChatById',
+      summary: 'Retrieve a saved AI conversation with full message history',
+      tags: ['AI'],
+      parameters: [pathParam('id', 'Chat UUID', 'uuid')],
+      responses: okJson(),
+    },
+    patch: {
+      operationId: 'updateAiChatTitle',
+      summary: 'Rename a saved AI conversation thread',
+      tags: ['AI'],
+      parameters: [pathParam('id', 'Chat UUID', 'uuid')],
+      requestBody: jsonRequestBody('UpdateAiChatSchema'),
+      responses: okJson(),
+    },
+    delete: {
+      operationId: 'deleteAiChat',
+      summary: 'Delete a saved AI conversation thread and its messages',
+      tags: ['AI'],
+      parameters: [pathParam('id', 'Chat UUID', 'uuid')],
+      responses: okJson(),
+    },
+  },
+  '/api/v1/ai/chats/{id}/export': {
+    get: {
+      operationId: 'exportAiChat',
+      summary: 'Export a saved AI conversation thread as PDF, DOCX, or Markdown',
+      tags: ['AI'],
+      parameters: [
+        pathParam('id', 'Chat UUID', 'uuid'),
+        {
+          name: 'format',
+          in: 'query',
+          required: false,
+          description: 'Export format: pdf, docx, or md',
+          schema: { type: 'string', enum: ['pdf', 'docx', 'md'], default: 'pdf' },
+        },
+        {
+          name: 'redact',
+          in: 'query',
+          required: false,
+          description: 'Set true to redact monetary figures in exported document',
+          schema: { type: 'string', enum: ['true', 'false'], default: 'false' },
+        },
+      ],
+      responses: {
+        '200': {
+          description: 'Generated conversation export file (application/pdf, .docx, or text/markdown)',
+        },
+        ...errorResponses(),
+      },
     },
   },
   '/api/v1/ai/usage': {

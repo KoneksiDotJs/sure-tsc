@@ -239,6 +239,17 @@ export const AiChatMessageInputSchema = z.object({
   systemPrompt: z.string().max(4000).optional(),
 });
 
+export const UpdateAiChatSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+});
+
+export const AiChatExportFormatEnum = z.enum(['pdf', 'docx', 'md']);
+
+export const AiChatExportQuerySchema = z.object({
+  format: AiChatExportFormatEnum.default('pdf'),
+  redact: z.enum(['true', 'false']).optional(),
+});
+
 export const LlmUsageQuerySchema = z.object({
   startDate: IsoDateStringSchema.optional(),
   endDate: IsoDateStringSchema.optional(),
@@ -291,4 +302,7 @@ export type MarketHistoryQueryInput = z.infer<typeof MarketHistoryQuerySchema>;
 export type AiProvider = z.infer<typeof AiProviderEnum>;
 export type AiConfigUpdateInput = z.infer<typeof AiConfigUpdateSchema>;
 export type AiChatMessageInput = z.infer<typeof AiChatMessageInputSchema>;
+export type UpdateAiChatInput = z.infer<typeof UpdateAiChatSchema>;
+export type AiChatExportFormat = z.infer<typeof AiChatExportFormatEnum>;
+export type AiChatExportQueryInput = z.infer<typeof AiChatExportQuerySchema>;
 export type LlmUsageQueryInput = z.infer<typeof LlmUsageQuerySchema>;

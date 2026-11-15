@@ -4,6 +4,7 @@ import {
   compareMoney,
   formatCurrency,
   mulMoney,
+  AiChatExportFormat,
   AiConfigUpdateInput,
   LlmUsageQueryInput,
 } from '@sure/shared';
@@ -11,6 +12,12 @@ import { decimalToFixed, getExchangeRate, prisma } from '../../config/prisma.js'
 import { AppError } from '../../middleware/pipeline.js';
 import { accountsService } from '../accounts/accounts.service.js';
 import { reportsService } from '../reports/reports.service.js';
+import {
+  renderChatDocxBuffer,
+  renderChatMarkdown,
+  renderChatPdfBuffer,
+  sanitizeExportFilename,
+} from './ai.export.js';
 import {
   fetchProviderModels,
   getSafeAiConfigForFamily,
@@ -231,11 +238,166 @@ export class AiService {
     }
   }
 
+  public async listChats(familyId: string) {
+    const chats = await prisma.chat.findMany({
+      where: { familyId },
+      orderBy: { updatedAt: 'desc' },
+      take: 50,
+      include: {
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { content: true, role: true },
+        },
+        _count: { select: { messages: true } },
+      },
+    });
+
+    return chats.map((chat) => ({
+      id: chat.id,
+      title: chat.title,
+      tokenCount: chat.tokenCount,
+      messageCount: chat._count.messages,
+      lastMessagePreview: chat.messages[0]?.content.slice(0, 120) ?? '',
+      createdAt: chat.createdAt.toISOString(),
+      updatedAt: chat.updatedAt.toISOString(),
+    }));
+  }
+
+  public async getChatById(familyId: string, chatId: string) {
+    const chat = await prisma.chat.findFirst({
+      where: { id: chatId, familyId },
+      include: {
+        messages: { orderBy: { createdAt: 'asc' } },
+      },
+    });
+    if (!chat) {
+      throw new AppError('NOT_FOUND', 'Chat conversation not found');
+    }
+
+    return {
+      id: chat.id,
+      title: chat.title,
+      tokenCount: chat.tokenCount,
+      createdAt: chat.createdAt.toISOString(),
+      updatedAt: chat.updatedAt.toISOString(),
+      messages: chat.messages.map((m) => ({
+        id: m.id,
+        chatId: m.chatId,
+        role: m.role,
+        content: m.content,
+        toolCalls: m.toolCalls,
+        createdAt: m.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  public async updateChatTitle(familyId: string, chatId: string, title: string) {
+    const existing = await prisma.chat.findFirst({
+      where: { id: chatId, familyId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new AppError('NOT_FOUND', 'Chat conversation not found');
+    }
+
+    const updated = await prisma.chat.update({
+      where: { id: existing.id },
+      data: { title: title.trim() },
+    });
+
+    return {
+      id: updated.id,
+      title: updated.title,
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  }
+
+  public async deleteChat(familyId: string, chatId: string) {
+    const existing = await prisma.chat.findFirst({
+      where: { id: chatId, familyId },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new AppError('NOT_FOUND', 'Chat conversation not found');
+    }
+
+    await prisma.chat.delete({
+      where: { id: existing.id },
+    });
+    return { deleted: true, id: existing.id };
+  }
+
+  public async exportChat(
+    familyId: string,
+    chatId: string,
+    format: AiChatExportFormat,
+    redactAmounts = false
+  ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+    const [family, chat] = await Promise.all([
+      prisma.family.findUnique({
+        where: { id: familyId },
+        select: { name: true, baseCurrency: true },
+      }),
+      prisma.chat.findFirst({
+        where: { id: chatId, familyId },
+        include: {
+          messages: { orderBy: { createdAt: 'asc' } },
+        },
+      }),
+    ]);
+
+    if (!family) {
+      throw new AppError('NOT_FOUND', 'Family not found');
+    }
+    if (!chat) {
+      throw new AppError('NOT_FOUND', 'Chat conversation not found');
+    }
+
+    const payload = {
+      id: chat.id,
+      title: chat.title,
+      tokenCount: chat.tokenCount,
+      createdAt: chat.createdAt,
+      updatedAt: chat.updatedAt,
+      familyName: family.name,
+      baseCurrency: family.baseCurrency,
+      messages: chat.messages,
+    };
+
+    const filename = sanitizeExportFilename(chat.title, format);
+    if (format === 'md') {
+      const md = renderChatMarkdown(payload, { redactAmounts });
+      return {
+        buffer: Buffer.from(md, 'utf-8'),
+        contentType: 'text/markdown; charset=utf-8',
+        filename,
+      };
+    }
+
+    if (format === 'docx') {
+      const buffer = await renderChatDocxBuffer(payload, { redactAmounts });
+      return {
+        buffer,
+        contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        filename,
+      };
+    }
+
+    const buffer = await renderChatPdfBuffer(payload, { redactAmounts });
+    return {
+      buffer,
+      contentType: 'application/pdf',
+      filename,
+    };
+  }
+
   public async sendChatMessage(
     familyId: string,
     userId: string,
     prompt: string,
-    customSystemPrompt?: string
+    customSystemPrompt?: string,
+    chatId?: string
   ) {
     const family = await prisma.family.findUnique({ where: { id: familyId } });
     if (!family) {
@@ -248,6 +410,27 @@ export class AiService {
         'FORBIDDEN',
         'AI Financial Assistant is disabled for this family. Enable AI Consent in Family Settings to use AI features.'
       );
+    }
+
+    let existingChat: {
+      id: string;
+      messages: Array<{ role: string; content: string }>;
+    } | null = null;
+    if (chatId) {
+      existingChat = await prisma.chat.findFirst({
+        where: { id: chatId, familyId },
+        select: {
+          id: true,
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 6,
+            select: { role: true, content: true },
+          },
+        },
+      });
+      if (!existingChat) {
+        throw new AppError('NOT_FOUND', 'Chat conversation not found');
+      }
     }
 
     const lower = prompt.toLowerCase();
@@ -316,6 +499,14 @@ export class AiService {
         customSystemPrompt?.trim() ||
         'You are Sure AI, a precise personal finance and wealth management assistant. Be concise, accurate, and cite exact verified ledger numbers without inventing figures.';
 
+      const historyBlock =
+        existingChat && existingChat.messages.length > 0
+          ? `\n\nRECENT CONVERSATION HISTORY:\n${[...existingChat.messages]
+              .reverse()
+              .map((m) => `${m.role}: ${m.content.slice(0, 600)}`)
+              .join('\n')}`
+          : '';
+
       const groundedSystemPrompt = `${baseSystemPrompt}
 
 VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
@@ -326,7 +517,7 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
 - Period Expenses: ${totalOutflows}
 - Net Savings: ${report.incomeStatement.netSavings}
 - Accounts: ${accountSummary || 'None yet'}
-- Top Expense Categories: ${topCategories || 'None categorized yet'}`;
+- Top Expense Categories: ${topCategories || 'None categorized yet'}${historyBlock}`;
 
       try {
         const completion = await invokeAiCompletion({
@@ -364,11 +555,34 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
         `_Free LLM not configured yet — add a free **Groq**, **Google Gemini**, **OpenRouter (:free)** API key, or local **Ollama** URL in **Settings → AI Prompts** (or \`.env\`) to enable conversational answers._`;
     }
 
+    if (existingChat) {
+      return prisma.chat.update({
+        where: { id: existingChat.id },
+        data: {
+          tokenCount: { increment: completionTotalTokens },
+          messages: {
+            create: [
+              { role: 'USER', content: prompt },
+              {
+                role: 'ASSISTANT',
+                content: assistantReply,
+                toolCalls: toolCalls as unknown as object,
+              },
+            ],
+          },
+        },
+        include: {
+          messages: { orderBy: { createdAt: 'asc' } },
+        },
+      });
+    }
+
+    const cleanTitle = prompt.replace(/\s+/g, ' ').trim().slice(0, 60) || 'Sure AI Chat';
     return prisma.chat.create({
       data: {
         familyId,
         userId,
-        title: prompt.slice(0, 50),
+        title: cleanTitle,
         tokenCount: completionTotalTokens,
         messages: {
           create: [

@@ -1,5 +1,6 @@
 import {
   AddWatchlistTickerSchema,
+  AiChatExportQuerySchema,
   AiChatMessageInputSchema,
   BulkEntryUpdateSchema,
   ChangePasswordSchema,
@@ -33,6 +34,7 @@ import {
   UpdateRuleSchema,
   UpsertBudgetMonthSchema,
   UpsertHoldingSchema,
+  UpdateAiChatSchema,
 } from '@sure/shared';
 import { OpenApiSchemaObject } from './types.js';
 import { zodToOpenApi } from './zod-mapper.js';
@@ -72,6 +74,8 @@ const schemaRegistry = {
   MarketHistoryQuerySchema,
   ResolveFinancekitConflictSchema,
   AiChatMessageInputSchema,
+  UpdateAiChatSchema,
+  AiChatExportQuerySchema,
 } as const;
 
 export function buildComponentSchemas(): Record<string, OpenApiSchemaObject> {
