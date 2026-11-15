@@ -299,6 +299,11 @@ describe('PostgreSQL API Integration Tests — Auth, Tenant Isolation, Ledger In
   });
 
   it('8. Marks a recurring bill paid, records ledger transaction, and recalculates account balance', async () => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const expectedNextDate = new Date(Date.parse(`${todayIso}T00:00:00Z`));
+    expectedNextDate.setUTCMonth(expectedNextDate.getUTCMonth() + 1);
+    const expectedNextIso = expectedNextDate.toISOString().slice(0, 10);
+
     const family = await createTestFamily();
     const checking = await createTestAccount(family.familyId, {
       name: 'Bill Checking',
@@ -313,7 +318,7 @@ describe('PostgreSQL API Integration Tests — Auth, Tenant Isolation, Ledger In
         amount: '-150.0000',
         currency: 'USD',
         cadence: 'MONTHLY',
-        nextOccurrenceDate: '2026-11-15',
+        nextOccurrenceDate: todayIso,
         accountId: checking.id,
         autoPay: false,
       });
@@ -323,9 +328,9 @@ describe('PostgreSQL API Integration Tests — Auth, Tenant Isolation, Ledger In
     const paidRes = await request(app)
       .post(`/api/v1/recurring/${billId}/mark-paid`)
       .set('Authorization', `Bearer ${family.authToken}`)
-      .send({ paidDate: '2026-11-14' });
+      .send({ paidDate: todayIso });
     expect(paidRes.status).toBe(201);
-    expect(paidRes.body.data.recurring.nextOccurrenceDate.slice(0, 10)).toBe('2026-12-15');
+    expect(paidRes.body.data.recurring.nextOccurrenceDate.slice(0, 10)).toBe(expectedNextIso);
 
     const accAfter = await request(app)
       .get(`/api/v1/accounts/${checking.id}`)
