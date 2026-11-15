@@ -94,6 +94,7 @@ export const ReportsAndSyncView: React.FC = () => {
     syncAdapters,
     syncConnections,
     connectProvider,
+    deleteProviderConnection,
     runSyncAll,
     resolveConflict,
     fetchAccountHoldings,
@@ -1346,6 +1347,7 @@ export const ReportsAndSyncView: React.FC = () => {
         onOpenConnect={() => setConnectOpen(true)}
         onCloseConnect={() => setConnectOpen(false)}
         onSyncAll={handleSyncAll}
+        onDeleteConnection={deleteProviderConnection}
         selectedAdapterKey={selectedAdapterKey}
         onChangeAdapterKey={setSelectedAdapterKey}
         institutionName={institutionName}

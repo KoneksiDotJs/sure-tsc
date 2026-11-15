@@ -7,6 +7,7 @@ export const ID_MESSAGES: Record<TranslationKey, string> = {
   'nav.imports': 'Impor',
   'nav.budgets': 'Anggaran',
   'nav.reports': 'Laporan',
+  'nav.markets': 'Pasar',
   'nav.settings': 'Pengaturan',
   'nav.back': 'Kembali',
   'nav.next': 'Berikutnya',

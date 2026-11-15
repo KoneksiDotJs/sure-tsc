@@ -557,18 +557,80 @@ export function useLedgerActions(params: UseLedgerActionsParams) {
     runAction(async () => {
       await apiRequest('/api/v1/sync/connections', { method: 'POST', body: JSON.stringify(input) });
       await queryClient.invalidateQueries({ queryKey: syncKeys.all });
+      await invalidateLedger();
     });
 
-  const runSyncAll = () =>
+  const updateProviderConnection: LedgerContextValue['updateProviderConnection'] = (
+    connectionId,
+    input
+  ) =>
     runAction(async () => {
-      const res = await apiRequest<{ syncedConnections: number; materializedAccounts: number }>(
-        '/api/v1/sync/run',
-        { method: 'POST' }
-      );
+      await apiRequest(`/api/v1/sync/connections/${connectionId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(input),
+      });
+      await queryClient.invalidateQueries({ queryKey: syncKeys.all });
+      await invalidateLedger();
+    });
+
+  const deleteProviderConnection: LedgerContextValue['deleteProviderConnection'] = (connectionId) =>
+    runAction(async () => {
+      await apiRequest(`/api/v1/sync/connections/${connectionId}`, { method: 'DELETE' });
+      await queryClient.invalidateQueries({ queryKey: syncKeys.all });
+      await invalidateLedger();
+    });
+
+  const syncProviderConnection: LedgerContextValue['syncProviderConnection'] = (connectionId) =>
+    runAction(async () => {
+      const res = await apiRequest<{
+        connectionId: string;
+        providerKey: string;
+        institutionName: string;
+        ok: boolean;
+        message: string;
+        syncedAt: string;
+      }>(`/api/v1/sync/connections/${connectionId}/sync`, { method: 'POST' });
       await queryClient.invalidateQueries({ queryKey: syncKeys.all });
       await invalidateLedger();
       return res;
     });
+
+  const runSyncAll = () =>
+    runAction(async () => {
+      const res = await apiRequest<{
+        syncedConnections: number;
+        materializedAccounts: number;
+        errors?: Array<{ connectionId: string; institutionName: string; message: string }>;
+      }>('/api/v1/sync/run', { method: 'POST' });
+      await queryClient.invalidateQueries({ queryKey: syncKeys.all });
+      await invalidateLedger();
+      return res;
+    });
+
+  const addWatchlistTicker: LedgerContextValue['addWatchlistTicker'] = (ticker) =>
+    runAction(async () => {
+      const res = await apiRequest<{ quote: LedgerContextValue['marketQuotes'][number] }>(
+        '/api/v1/sync/watchlist',
+        {
+          method: 'POST',
+          body: JSON.stringify({ ticker }),
+        }
+      );
+      await queryClient.invalidateQueries({ queryKey: syncKeys.all });
+      return res.quote;
+    });
+
+  const fetchMarketHistory: LedgerContextValue['fetchMarketHistory'] = async (query) => {
+    const params = new URLSearchParams();
+    params.set('kind', query.kind);
+    if (query.ticker) params.set('ticker', query.ticker);
+    if (query.from) params.set('from', query.from);
+    if (query.to) params.set('to', query.to);
+    if (query.range) params.set('range', query.range);
+    return apiRequest<Awaited<ReturnType<LedgerContextValue['fetchMarketHistory']>>>(
+      `/api/v1/sync/markets/history?${params.toString()}`
+    );
+  };
 
   const resolveConflict = (conflictId: string, resolution: string) =>
     runAction(async () => {
@@ -650,7 +712,12 @@ export function useLedgerActions(params: UseLedgerActionsParams) {
     markRecurringPaid,
     deleteRecurringBill,
     connectProvider,
+    updateProviderConnection,
+    deleteProviderConnection,
+    syncProviderConnection,
     runSyncAll,
+    addWatchlistTicker,
+    fetchMarketHistory,
     resolveConflict,
     runBayesAutoCategorizer,
   };

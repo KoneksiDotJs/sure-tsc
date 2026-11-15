@@ -1,5 +1,13 @@
-import { addMoney, absMoney, compareMoney, AiConfigUpdateInput, LlmUsageQueryInput } from '@sure/shared';
-import { decimalToFixed, prisma } from '../../config/prisma.js';
+import {
+  addMoney,
+  absMoney,
+  compareMoney,
+  formatCurrency,
+  mulMoney,
+  AiConfigUpdateInput,
+  LlmUsageQueryInput,
+} from '@sure/shared';
+import { decimalToFixed, getExchangeRate, prisma } from '../../config/prisma.js';
 import { AppError } from '../../middleware/pipeline.js';
 import { accountsService } from '../accounts/accounts.service.js';
 import { reportsService } from '../reports/reports.service.js';
@@ -20,12 +28,27 @@ export { BayesCategorizer };
  * Strictly enforces Non-Negotiable Invariant #5:
  * Never invoke AI assistant / external LLM workflows unless `family.aiEnabled === true`.
  */
+const AUTO_MILESTONE_TITLE = 'Net Worth Milestone Reached';
+const BASE_MILESTONE_USD = '100000.0000';
+
 export class AiService {
   public async listInsights(familyId: string) {
-    const rows = await prisma.insight.findMany({
+    let rows = await prisma.insight.findMany({
       where: { familyId, dismissed: false },
       orderBy: { createdAt: 'desc' },
     });
+
+    const autoMilestones = rows.filter(
+      (r) => r.type === 'NET_WORTH_MILESTONE' && r.title === AUTO_MILESTONE_TITLE
+    );
+    if (autoMilestones.length > 0) {
+      await this.generateProactiveInsights(familyId);
+      rows = await prisma.insight.findMany({
+        where: { familyId, dismissed: false },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+
     return rows.map((r) => ({
       ...r,
       metricAmount: r.metricAmount ? decimalToFixed(r.metricAmount) : '0.0000',
@@ -364,23 +387,76 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
     });
   }
 
-  public async generateProactiveInsights(familyId: string) {
-    const report = await reportsService.getFinancialReport(familyId);
-    const generated = [];
+  private async resolveNetWorthMilestoneThreshold(baseCurrency: string): Promise<string> {
+    const upper = baseCurrency.trim().toUpperCase();
+    if (upper === 'USD') return BASE_MILESTONE_USD;
+    const usdToBase = await getExchangeRate('USD', upper);
+    return mulMoney(BASE_MILESTONE_USD, usdToBase);
+  }
 
-    if (compareMoney(report.balanceSheet.netWorth, '100000.0000') > 0) {
-      const insight = await prisma.insight.create({
-        data: {
+  public async generateProactiveInsights(familyId: string) {
+    const [family, report, existingMilestones] = await Promise.all([
+      prisma.family.findUnique({
+        where: { id: familyId },
+        select: { baseCurrency: true, locale: true },
+      }),
+      reportsService.getFinancialReport(familyId),
+      prisma.insight.findMany({
+        where: {
           familyId,
           type: 'NET_WORTH_MILESTONE',
-          severity: 'POSITIVE',
-          title: 'Net Worth Milestone Reached',
-          description:
-            'Your family net worth exceeds $100,000 across liquid, investment, and property accounts.',
-          metricAmount: report.balanceSheet.netWorth,
+          title: AUTO_MILESTONE_TITLE,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const baseCurrency = (family?.baseCurrency || report.baseCurrency || 'USD').toUpperCase();
+    const locale = family?.locale || 'en-US';
+    const threshold = await this.resolveNetWorthMilestoneThreshold(baseCurrency);
+    const generated = [];
+
+    if (compareMoney(report.balanceSheet.netWorth, threshold) > 0) {
+      const formattedThreshold = formatCurrency(threshold, baseCurrency, { locale });
+      const description = `Your family net worth exceeds ${formattedThreshold} across liquid, investment, and property accounts.`;
+
+      const [latest, ...duplicates] = existingMilestones;
+      if (duplicates.length > 0) {
+        await prisma.insight.deleteMany({
+          where: { id: { in: duplicates.map((d) => d.id) } },
+        });
+      }
+
+      if (latest) {
+        if (!latest.dismissed) {
+          const updated = await prisma.insight.update({
+            where: { id: latest.id },
+            data: {
+              description,
+              metricAmount: report.balanceSheet.netWorth,
+            },
+          });
+          generated.push(updated);
+        }
+      } else {
+        const insight = await prisma.insight.create({
+          data: {
+            familyId,
+            type: 'NET_WORTH_MILESTONE',
+            severity: 'POSITIVE',
+            title: AUTO_MILESTONE_TITLE,
+            description,
+            metricAmount: report.balanceSheet.netWorth,
+          },
+        });
+        generated.push(insight);
+      }
+    } else if (existingMilestones.length > 0) {
+      await prisma.insight.deleteMany({
+        where: {
+          id: { in: existingMilestones.map((m) => m.id) },
         },
       });
-      generated.push(insight);
     }
 
     return generated;

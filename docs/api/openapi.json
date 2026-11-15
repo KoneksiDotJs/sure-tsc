@@ -4309,7 +4309,7 @@
     "/api/v1/sync/connections": {
       "post": {
         "operationId": "createSyncConnection",
-        "summary": "Connect a bank/institution sync provider (SimpleFIN/Plaid/Manual)",
+        "summary": "Connect and optionally configure an external sync provider (Binance/Yahoo Finance/Frankfurter FX)",
         "tags": [
           "Sync"
         ],
@@ -4376,6 +4376,230 @@
         }
       }
     },
+    "/api/v1/sync/connections/{id}": {
+      "patch": {
+        "operationId": "updateSyncConnection",
+        "summary": "Update provider connection label, linked account, or encrypted credentials/config",
+        "tags": [
+          "Sync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Provider connection UUID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProviderConnectionSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation or domain rule error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid JWT / session cookie / API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the authenticated family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteSyncConnection",
+        "summary": "Delete a provider connection and unlink associated accounts",
+        "tags": [
+          "Sync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Provider connection UUID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation or domain rule error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid JWT / session cookie / API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the authenticated family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sync/connections/{id}/sync": {
+      "post": {
+        "operationId": "syncSingleConnection",
+        "summary": "Run a live sync for a single provider connection",
+        "tags": [
+          "Sync"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Provider connection UUID",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation or domain rule error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid JWT / session cookie / API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the authenticated family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sync/run": {
       "post": {
         "operationId": "runSync",
@@ -4386,6 +4610,200 @@
         "responses": {
           "200": {
             "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation or domain rule error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid JWT / session cookie / API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the authenticated family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sync/markets/history": {
+      "get": {
+        "operationId": "getMarketHistory",
+        "summary": "Fetch historical price series and KPI metrics for a stock, crypto ticker, or FX pair",
+        "tags": [
+          "Sync"
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "description": "Series type: security or fx",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "security",
+                "fx"
+              ],
+              "default": "security"
+            }
+          },
+          {
+            "name": "ticker",
+            "in": "query",
+            "required": false,
+            "description": "Ticker symbol (required when kind=security, e.g. BBCA.JK, BTC-USD)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "description": "Base ISO-4217 currency code (required when kind=fx)",
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 3
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "description": "Quote ISO-4217 currency code (required when kind=fx)",
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 3
+            }
+          },
+          {
+            "name": "range",
+            "in": "query",
+            "required": false,
+            "description": "Historical range window",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "5d",
+                "1mo",
+                "3mo",
+                "6mo",
+                "1y"
+              ],
+              "default": "1mo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation or domain rule error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid JWT / session cookie / API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Resource not found in the authenticated family",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sync/watchlist": {
+      "post": {
+        "operationId": "addWatchlistTicker",
+        "summary": "Fetch a live market quote and register the ticker on the family watchlist",
+        "tags": [
+          "Sync"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddWatchlistTickerSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Resource created",
             "content": {
               "application/json": {
                 "schema": {
@@ -7055,12 +7473,179 @@
           "accountId": {
             "type": "string",
             "format": "uuid"
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "apiKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "apiSecret": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "useTestnet": {
+                "type": "boolean"
+              },
+              "quoteCurrency": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 5
+              },
+              "targetAccountId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "tickers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 30
+                },
+                "maxItems": 50
+              },
+              "baseCurrency": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 3
+              },
+              "targetCurrencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 3
+                },
+                "maxItems": 30
+              }
+            }
           }
         },
         "required": [
           "providerKey",
           "institutionName"
         ]
+      },
+      "UpdateProviderConnectionSchema": {
+        "type": "object",
+        "properties": {
+          "institutionName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "accountId": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "apiKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "apiSecret": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "useTestnet": {
+                "type": "boolean"
+              },
+              "quoteCurrency": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 5
+              },
+              "targetAccountId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "tickers": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 30
+                },
+                "maxItems": 50
+              },
+              "baseCurrency": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 3
+              },
+              "targetCurrencies": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 3
+                },
+                "maxItems": 30
+              }
+            }
+          }
+        }
+      },
+      "AddWatchlistTickerSchema": {
+        "type": "object",
+        "properties": {
+          "ticker": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          }
+        },
+        "required": [
+          "ticker"
+        ]
+      },
+      "MarketHistoryQuerySchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "security",
+              "fx"
+            ],
+            "default": "security"
+          },
+          "ticker": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "from": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "to": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 3
+          },
+          "range": {
+            "type": "string",
+            "enum": [
+              "5d",
+              "1mo",
+              "3mo",
+              "6mo",
+              "1y"
+            ],
+            "default": "1mo"
+          }
+        }
       },
       "ResolveFinancekitConflictSchema": {
         "type": "object",

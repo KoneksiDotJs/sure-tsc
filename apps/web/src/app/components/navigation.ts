@@ -4,6 +4,7 @@ import {
   FileSpreadsheet,
   Home,
   PieChart,
+  TrendingUp,
   Wallet,
 } from 'lucide-react';
 
@@ -13,6 +14,7 @@ export const NAV_ITEMS = [
   { id: 'transactions', railKey: 'nav.transactions' as const, railLabel: 'Ledger', label: 'Ledger & Splits', icon: ArrowLeftRight },
   { id: 'imports', railKey: 'nav.imports' as const, railLabel: 'Imports', label: 'Imports & Rules', icon: FileSpreadsheet },
   { id: 'budgets', railKey: 'nav.budgets' as const, railLabel: 'Budgets', label: 'Budgets & Goals', icon: PieChart },
+  { id: 'markets', railKey: 'nav.markets' as const, railLabel: 'Markets', label: 'Markets & FX', icon: TrendingUp },
   { id: 'reports', railKey: 'nav.reports' as const, railLabel: 'Reports', label: 'Reports & Sync', icon: BarChart3 },
 ] as const;
 

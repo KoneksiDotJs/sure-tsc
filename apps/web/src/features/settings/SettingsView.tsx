@@ -32,15 +32,20 @@ import {
 } from './general/ProfileAndSecuritySections.js';
 
 export const SettingsView: React.FC<{
+  initialSection?: SettingsSectionId;
   onBack?: () => void;
   onSignOut?: () => void;
   onOpenAccount?: (accountId: string) => void;
   onNavigateToImports?: () => void;
-}> = ({ onBack, onSignOut, onOpenAccount, onNavigateToImports }) => {
+}> = ({ initialSection = 'accounts', onBack, onSignOut, onOpenAccount, onNavigateToImports }) => {
   const { t } = useLocale();
   const { family, runSyncAll } = useLedger();
 
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>('accounts');
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
+
+  useEffect(() => {
+    setActiveSection(initialSection);
+  }, [initialSection]);
 
   const [prefs, setPrefs] = useState<LocalWorkspacePrefs>(() => {
     if (typeof window !== 'undefined') {

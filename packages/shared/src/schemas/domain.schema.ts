@@ -129,10 +129,40 @@ export const UpsertHoldingSchema = z.object({
   currentPrice: DecimalStringSchema,
 });
 
+export const ProviderConnectionConfigSchema = z.object({
+  apiKey: z.string().trim().min(1).max(256).optional(),
+  apiSecret: z.string().trim().min(1).max(256).optional(),
+  useTestnet: z.boolean().optional(),
+  quoteCurrency: z.string().trim().min(3).max(5).optional(),
+  targetAccountId: z.string().uuid().optional(),
+  tickers: z.array(z.string().trim().min(1).max(30)).max(50).optional(),
+  baseCurrency: z.string().trim().length(3).optional(),
+  targetCurrencies: z.array(z.string().trim().length(3)).max(30).optional(),
+});
+
 export const CreateProviderConnectionSchema = z.object({
   providerKey: z.string().min(1).max(60),
   institutionName: z.string().min(1).max(120),
   accountId: z.string().uuid().optional(),
+  config: ProviderConnectionConfigSchema.optional(),
+});
+
+export const UpdateProviderConnectionSchema = z.object({
+  institutionName: z.string().min(1).max(120).optional(),
+  accountId: z.string().uuid().nullable().optional(),
+  config: ProviderConnectionConfigSchema.optional(),
+});
+
+export const AddWatchlistTickerSchema = z.object({
+  ticker: z.string().trim().min(1).max(30),
+});
+
+export const MarketHistoryQuerySchema = z.object({
+  kind: z.enum(['security', 'fx']).default('security'),
+  ticker: z.string().trim().min(1).max(30).optional(),
+  from: z.string().trim().length(3).optional(),
+  to: z.string().trim().length(3).optional(),
+  range: z.enum(['5d', '1mo', '3mo', '6mo', '1y']).default('1mo'),
 });
 
 // FR-4.1: Monthly Budgeting with Rollover
@@ -253,6 +283,11 @@ export type UpsertBudgetMonthInput = z.infer<typeof UpsertBudgetMonthSchema>;
 export type CreateGoalInput = z.infer<typeof CreateGoalSchema>;
 export type CreateRecurringInput = z.infer<typeof CreateRecurringSchema>;
 export type ResolveFinancekitConflictInput = z.infer<typeof ResolveFinancekitConflictSchema>;
+export type ProviderConnectionConfigInput = z.infer<typeof ProviderConnectionConfigSchema>;
+export type CreateProviderConnectionInput = z.infer<typeof CreateProviderConnectionSchema>;
+export type UpdateProviderConnectionInput = z.infer<typeof UpdateProviderConnectionSchema>;
+export type AddWatchlistTickerInput = z.infer<typeof AddWatchlistTickerSchema>;
+export type MarketHistoryQueryInput = z.infer<typeof MarketHistoryQuerySchema>;
 export type AiProvider = z.infer<typeof AiProviderEnum>;
 export type AiConfigUpdateInput = z.infer<typeof AiConfigUpdateSchema>;
 export type AiChatMessageInput = z.infer<typeof AiChatMessageInputSchema>;

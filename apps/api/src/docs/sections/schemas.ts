@@ -1,4 +1,5 @@
 import {
+  AddWatchlistTickerSchema,
   AiChatMessageInputSchema,
   BulkEntryUpdateSchema,
   ChangePasswordSchema,
@@ -11,6 +12,7 @@ import {
   CreateImportPreviewSchema,
   CreateMerchantSchema,
   CreateProviderConnectionSchema,
+  UpdateProviderConnectionSchema,
   CreateRecurringSchema,
   CreateRuleSchema,
   CreateTagSchema,
@@ -20,6 +22,7 @@ import {
   InviteFamilyMemberSchema,
   LoanSimulationInputSchema,
   LoginSchema,
+  MarketHistoryQuerySchema,
   MatchTransferSchema,
   RegisterSchema,
   ResolveFinancekitConflictSchema,
@@ -64,6 +67,9 @@ const schemaRegistry = {
   CreateGoalSchema,
   CreateRecurringSchema,
   CreateProviderConnectionSchema,
+  UpdateProviderConnectionSchema,
+  AddWatchlistTickerSchema,
+  MarketHistoryQuerySchema,
   ResolveFinancekitConflictSchema,
   AiChatMessageInputSchema,
 } as const;

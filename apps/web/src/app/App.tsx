@@ -19,7 +19,15 @@ import { TransactionsView } from '../features/transactions/TransactionsView.js';
 import { ImportsAndRulesView } from '../features/imports/ImportsAndRulesView.js';
 import { BudgetsAndGoalsView } from '../features/budgets/BudgetsAndGoalsView.js';
 import { ReportsAndSyncView } from '../features/reports/ReportsAndSyncView.js';
+import { MarketsView } from '../features/markets/MarketsView.js';
+import { MarketsSidebar } from '../features/markets/MarketsSidebar.js';
+import { MarketQuickDrawer } from '../features/markets/MarketQuickDrawer.js';
+import {
+  resolveDefaultMarketTarget,
+  type SelectedMarketTarget,
+} from '../features/markets/marketTypes.js';
 import { SettingsView } from '../features/settings/SettingsView.js';
+import type { SettingsSectionId } from '../features/settings/settings.nav.js';
 import { AiAssistantPanel } from '../features/ai/AiAssistantPanel.js';
 import { NAV_ITEMS, type NavTabId } from './components/navigation.js';
 import { AppAccountSidebar } from './components/AppAccountSidebar.js';
@@ -30,7 +38,19 @@ import { useWorkspaceAiChat } from './components/useWorkspaceAiChat.js';
 
 const SureWorkspaceShell: React.FC = () => {
   const { session, logout } = useAuth();
-  const { family, accounts, updateFamilySettings, lastError, clearError, isLoading } = useLedger();
+  const {
+    family,
+    accounts,
+    marketQuotes,
+    exchangeRates,
+    familyHoldings,
+    updateFamilySettings,
+    addWatchlistTicker,
+    runSyncAll,
+    lastError,
+    clearError,
+    isLoading,
+  } = useLedger();
   const { enabled: privacyEnabled, toggle: togglePrivacy } = usePrivacyMode();
   const { resolvedTheme, toggleDark } = useTheme();
   const { setLocale } = useLocale();
@@ -43,9 +63,15 @@ const SureWorkspaceShell: React.FC = () => {
   }, [family.locale, setLocale]);
 
   const [activeTab, setActiveTab] = useState<NavTabId>('dashboard');
+  const [settingsInitialSection, setSettingsInitialSection] =
+    useState<SettingsSectionId>('accounts');
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [selectedMarketTarget, setSelectedMarketTarget] =
+    useState<SelectedMarketTarget | null>(null);
+  const [marketSyncBusy, setMarketSyncBusy] = useState<boolean>(false);
   const [showLeftSidebar, setShowLeftSidebar] = useState<boolean>(true);
   const [mobileLeftOpen, setMobileLeftOpen] = useState<boolean>(false);
+  const [showMarketSidebar, setShowMarketSidebar] = useState<boolean>(false);
   const [showAiSidebar, setShowAiSidebar] = useState<boolean>(false);
   const [cmdOpen, setCmdOpen] = useState<boolean>(false);
 
@@ -75,6 +101,53 @@ const SureWorkspaceShell: React.FC = () => {
   );
 
   const isSettingsView = activeTab === 'settings';
+  const isMarketsView = activeTab === 'markets';
+
+  const effectiveMarketTarget = useMemo(
+    () =>
+      selectedMarketTarget ??
+      resolveDefaultMarketTarget(marketQuotes, exchangeRates, family.baseCurrency),
+    [selectedMarketTarget, marketQuotes, exchangeRates, family.baseCurrency]
+  );
+
+  const handleMarketSyncAll = async () => {
+    setMarketSyncBusy(true);
+    try {
+      await runSyncAll();
+    } finally {
+      setMarketSyncBusy(false);
+    }
+  };
+
+  const openSyncSettings = () => {
+    setSettingsInitialSection('sync');
+    setActiveTab('settings');
+  };
+
+  const navigateTab = (tab: NavTabId) => {
+    if (tab === 'settings') {
+      setSettingsInitialSection('accounts');
+    }
+    setActiveTab(tab);
+  };
+
+  const marketSidebarNode = (
+    <MarketsSidebar
+      familyBaseCurrency={family.baseCurrency}
+      marketQuotes={marketQuotes}
+      exchangeRates={exchangeRates}
+      familyHoldings={familyHoldings}
+      selectedTarget={effectiveMarketTarget}
+      onSelectTarget={(target) => {
+        setSelectedMarketTarget(target);
+        setMobileLeftOpen(false);
+      }}
+      onAddTicker={addWatchlistTicker}
+      onSyncAll={handleMarketSyncAll}
+      onOpenSyncSettings={openSyncSettings}
+      syncBusy={marketSyncBusy}
+    />
+  );
 
   const accountSidebarNode = (
     <AppAccountSidebar
@@ -87,8 +160,23 @@ const SureWorkspaceShell: React.FC = () => {
       activeTab={activeTab}
       selectedAccountId={selectedAccountId}
       onSelectAccount={setSelectedAccountId}
-      onNavigate={setActiveTab}
+      onNavigate={navigateTab}
       onCloseMobile={() => setMobileLeftOpen(false)}
+    />
+  );
+
+  const activeLeftSidebarNode = isMarketsView ? marketSidebarNode : accountSidebarNode;
+
+  const marketQuickDrawerNode = (
+    <MarketQuickDrawer
+      onClose={() => setShowMarketSidebar(false)}
+      onOpenMarketTarget={(target) => {
+        if (target) {
+          setSelectedMarketTarget(target);
+        }
+        setShowMarketSidebar(false);
+        setActiveTab('markets');
+      }}
     />
   );
 
@@ -104,7 +192,7 @@ const SureWorkspaceShell: React.FC = () => {
       onSend={(promptOverride) => void aiChat.sendMessage(promptOverride)}
       onClearChat={aiChat.clearChat}
       onEnableAi={() => void updateFamilySettings({ aiEnabled: true })}
-      onOpenAiSettings={() => setActiveTab('settings')}
+      onOpenAiSettings={() => navigateTab('settings')}
       onClose={() => setShowAiSidebar(false)}
     />
   );
@@ -113,13 +201,13 @@ const SureWorkspaceShell: React.FC = () => {
     <div className="min-h-screen flex bg-[var(--bg-canvas)] text-[var(--text-primary)] pb-16 lg:pb-0">
       <AppDesktopRail
         activeTab={activeTab}
-        onNavigate={setActiveTab}
+        onNavigate={navigateTab}
         onLogout={() => void logout()}
       />
 
       {showLeftSidebar && !isSettingsView && (
         <aside className="no-print hidden lg:block w-[290px] shrink-0 border-r border-[var(--border-primary)] bg-[var(--bg-canvas)] sticky top-0 h-screen">
-          {accountSidebarNode}
+          {activeLeftSidebarNode}
         </aside>
       )}
 
@@ -131,6 +219,7 @@ const SureWorkspaceShell: React.FC = () => {
           baseCurrency={family.baseCurrency}
           isSettingsView={isSettingsView}
           showLeftSidebar={showLeftSidebar}
+          showMarketSidebar={showMarketSidebar}
           showAiSidebar={showAiSidebar}
           privacyEnabled={privacyEnabled}
           darkMode={darkMode}
@@ -145,7 +234,20 @@ const SureWorkspaceShell: React.FC = () => {
           onOpenCommandPalette={() => setCmdOpen(true)}
           onTogglePrivacy={togglePrivacy}
           onToggleDark={toggleDark}
-          onToggleAiSidebar={() => setShowAiSidebar((v) => !v)}
+          onToggleMarketSidebar={() =>
+            setShowMarketSidebar((prev) => {
+              const next = !prev;
+              if (next) setShowAiSidebar(false);
+              return next;
+            })
+          }
+          onToggleAiSidebar={() =>
+            setShowAiSidebar((prev) => {
+              const next = !prev;
+              if (next) setShowMarketSidebar(false);
+              return next;
+            })
+          }
         />
 
         <main
@@ -187,9 +289,23 @@ const SureWorkspaceShell: React.FC = () => {
               {activeTab === 'transactions' && <TransactionsView />}
               {activeTab === 'imports' && <ImportsAndRulesView />}
               {activeTab === 'budgets' && <BudgetsAndGoalsView />}
+              {activeTab === 'markets' && (
+                <MarketsView
+                  selectedTarget={effectiveMarketTarget}
+                  onSelectTarget={setSelectedMarketTarget}
+                  onOpenAccount={(accountId) => {
+                    setSelectedAccountId(accountId);
+                    setActiveTab('accounts');
+                  }}
+                  onOpenSyncSettings={openSyncSettings}
+                  syncBusy={marketSyncBusy}
+                  onSyncAll={handleMarketSyncAll}
+                />
+              )}
               {activeTab === 'reports' && <ReportsAndSyncView />}
               {activeTab === 'settings' && (
                 <SettingsView
+                  initialSection={settingsInitialSection}
                   onBack={() => setActiveTab('dashboard')}
                   onSignOut={() => void logout()}
                   onOpenAccount={(accountId) => {
@@ -204,24 +320,39 @@ const SureWorkspaceShell: React.FC = () => {
         </main>
       </div>
 
+      {showMarketSidebar && (
+        <aside className="no-print hidden lg:flex flex-col w-[360px] shrink-0 border-l border-[var(--border-primary)] bg-[var(--bg-surface)] p-4 sticky top-0 h-screen overflow-hidden">
+          {marketQuickDrawerNode}
+        </aside>
+      )}
+
       {showAiSidebar && (
         <aside className="no-print hidden lg:flex flex-col w-[410px] shrink-0 border-l border-[var(--border-primary)] bg-[var(--bg-surface)] p-4 sticky top-0 h-screen overflow-hidden">
           {aiAssistantNode}
         </aside>
       )}
 
-      <AppMobileBottomBar activeTab={activeTab} onNavigate={setActiveTab} />
+      <AppMobileBottomBar activeTab={activeTab} onNavigate={navigateTab} />
 
       <SlideOverDrawer
         open={mobileLeftOpen}
         onClose={() => setMobileLeftOpen(false)}
-        title="Accounts & Balances"
+        title={isMarketsView ? 'Watchlist & FX' : 'Accounts & Balances'}
         subtitle={family.name}
       >
-        {accountSidebarNode}
+        {activeLeftSidebarNode}
       </SlideOverDrawer>
 
       <div className="lg:hidden">
+        <SlideOverDrawer
+          open={showMarketSidebar}
+          onClose={() => setShowMarketSidebar(false)}
+          title="Market & FX Pulse"
+          subtitle="Watchlist & Currency Converter"
+        >
+          {marketQuickDrawerNode}
+        </SlideOverDrawer>
+
         <SlideOverDrawer
           open={showAiSidebar}
           onClose={() => setShowAiSidebar(false)}

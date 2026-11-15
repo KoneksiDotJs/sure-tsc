@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Plug, Plus, RefreshCw } from 'lucide-react';
+import { Check, Plug, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import {
   Alert,
   Button,
@@ -53,6 +53,7 @@ interface SyncConnectionsAndConflictsProps {
   onOpenConnect: () => void;
   onCloseConnect: () => void;
   onSyncAll: () => Promise<void> | void;
+  onDeleteConnection: (connectionId: string) => Promise<void> | void;
   selectedAdapterKey: string;
   onChangeAdapterKey: (key: string) => void;
   institutionName: string;
@@ -73,6 +74,7 @@ export const SyncConnectionsAndConflicts: React.FC<SyncConnectionsAndConflictsPr
   onOpenConnect,
   onCloseConnect,
   onSyncAll,
+  onDeleteConnection,
   selectedAdapterKey,
   onChangeAdapterKey,
   institutionName,
@@ -195,7 +197,19 @@ export const SyncConnectionsAndConflicts: React.FC<SyncConnectionsAndConflictsPr
                     description={`Adapter: ${conn.providerName} • Last sync: ${
                       conn.lastSyncedAt ? conn.lastSyncedAt.slice(0, 16).replace('T', ' ') : 'Pending'
                     }`}
-                    value={<Pill label={conn.status} color="#10b981" />}
+                    value={
+                      <div className="flex items-center gap-2">
+                        <Pill label={conn.status} color="#10b981" />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Delete ${conn.institutionName}`}
+                          onClick={() => void onDeleteConnection(conn.id)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-[var(--status-negative)]" />
+                        </Button>
+                      </div>
+                    }
                   />
                 ))}
               </div>

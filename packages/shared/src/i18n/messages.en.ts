@@ -5,6 +5,7 @@ export const EN_MESSAGES = {
   'nav.imports': 'Imports',
   'nav.budgets': 'Budgets',
   'nav.reports': 'Reports',
+  'nav.markets': 'Markets',
   'nav.settings': 'Settings',
   'nav.back': 'Back',
   'nav.next': 'Next',

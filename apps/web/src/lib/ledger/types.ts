@@ -205,15 +205,83 @@ export interface WebProviderAdapter {
   category: 'BANKING' | 'CRYPTO' | 'BROKERAGE' | 'MARKET_DATA';
   regions: string[];
   supportsWebhooks: boolean;
+  supportsLiveSync?: boolean;
+  description?: string;
+}
+
+export interface WebProviderConnectionConfigSummary {
+  useTestnet: boolean;
+  quoteCurrency: string | null;
+  targetAccountId: string | null;
+  tickers: string[];
+  baseCurrency: string | null;
+  targetCurrencies: string[];
 }
 
 export interface WebProviderConnection {
   id: string;
+  providerKey?: string;
   providerName: string;
+  providerCategory?: string;
   institutionName: string;
   status: string;
   lastSyncedAt: string | null;
   createdAt: string;
+  supportsLiveSync?: boolean;
+  hasCredentials?: boolean;
+  maskedApiKey?: string | null;
+  configSummary?: WebProviderConnectionConfigSummary;
+}
+
+export interface WebMarketQuote {
+  id: string;
+  ticker: string;
+  name: string;
+  currency: string;
+  currentPrice: string;
+  assetClass: string;
+}
+
+export interface WebExchangeRateItem {
+  baseCurrency: string;
+  targetCurrency: string;
+  date: string;
+  rate: string;
+}
+
+export interface WebFamilyHolding {
+  id: string;
+  accountId: string;
+  accountName: string;
+  accountType: string;
+  currency: string;
+  ticker: string;
+  securityName: string;
+  assetClass: string;
+  qty: string;
+  avgCostBasis: string;
+  currentPrice: string;
+  marketValue: string;
+  costBasisTotal: string;
+  unrealizedGain: string;
+  returnPercent: string;
+}
+
+export type WebMarketHistoryRange = '5d' | '1mo' | '3mo' | '6mo' | '1y';
+
+export interface WebMarketHistory {
+  kind: 'security' | 'fx';
+  symbol: string;
+  name: string;
+  currency: string;
+  range: WebMarketHistoryRange;
+  latestClose: string;
+  periodOpen: string;
+  changeAmount: string;
+  changePercent: string;
+  periodHigh: string;
+  periodLow: string;
+  points: Array<{ date: string; close: string }>;
 }
 
 export interface WebAccountHolding {
@@ -331,6 +399,9 @@ export interface ApiBudgetResponse {
 export interface ApiSyncResponse {
   adapters: WebProviderAdapter[];
   connections: WebProviderConnection[];
+  marketQuotes?: WebMarketQuote[];
+  exchangeRates?: WebExchangeRateItem[];
+  familyHoldings?: WebFamilyHolding[];
   pendingConflicts: Array<{
     id: string;
     providerName: string;
@@ -394,6 +465,9 @@ export interface LedgerContextValue {
   conflicts: WebConflict[];
   syncAdapters: WebProviderAdapter[];
   syncConnections: WebProviderConnection[];
+  marketQuotes: WebMarketQuote[];
+  exchangeRates: WebExchangeRateItem[];
+  familyHoldings: WebFamilyHolding[];
   insights: WebInsight[];
   reportData: WebReportData | null;
   budgetMonth: string;
@@ -523,8 +597,60 @@ export interface LedgerContextValue {
   }) => Promise<void>;
   markRecurringPaid: (recurringId: string, paidDate?: string) => Promise<void>;
   deleteRecurringBill: (recurringId: string) => Promise<void>;
-  connectProvider: (input: { providerKey: string; institutionName: string }) => Promise<void>;
-  runSyncAll: () => Promise<{ syncedConnections: number; materializedAccounts: number }>;
+  connectProvider: (input: {
+    providerKey: string;
+    institutionName: string;
+    accountId?: string;
+    config?: {
+      apiKey?: string;
+      apiSecret?: string;
+      useTestnet?: boolean;
+      quoteCurrency?: string;
+      targetAccountId?: string;
+      tickers?: string[];
+      baseCurrency?: string;
+      targetCurrencies?: string[];
+    };
+  }) => Promise<void>;
+  updateProviderConnection: (
+    connectionId: string,
+    input: {
+      institutionName?: string;
+      accountId?: string | null;
+      config?: {
+        apiKey?: string;
+        apiSecret?: string;
+        useTestnet?: boolean;
+        quoteCurrency?: string;
+        targetAccountId?: string;
+        tickers?: string[];
+        baseCurrency?: string;
+        targetCurrencies?: string[];
+      };
+    }
+  ) => Promise<void>;
+  deleteProviderConnection: (connectionId: string) => Promise<void>;
+  syncProviderConnection: (connectionId: string) => Promise<{
+    connectionId: string;
+    providerKey: string;
+    institutionName: string;
+    ok: boolean;
+    message: string;
+    syncedAt: string;
+  }>;
+  runSyncAll: () => Promise<{
+    syncedConnections: number;
+    materializedAccounts: number;
+    errors?: Array<{ connectionId: string; institutionName: string; message: string }>;
+  }>;
+  addWatchlistTicker: (ticker: string) => Promise<WebMarketQuote>;
+  fetchMarketHistory: (query: {
+    kind: 'security' | 'fx';
+    ticker?: string;
+    from?: string;
+    to?: string;
+    range?: WebMarketHistoryRange;
+  }) => Promise<WebMarketHistory>;
   resolveConflict: (conflictId: string, resolution: string) => Promise<void>;
   runBayesAutoCategorizer: () => Promise<number>;
 }

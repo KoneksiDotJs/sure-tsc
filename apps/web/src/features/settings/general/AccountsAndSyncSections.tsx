@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AccountType, sumMoney } from '@sure/shared';
 import {
+  Alert,
   Button,
   Card,
   CategoryIcon,
@@ -18,9 +19,15 @@ import {
   Layers,
   MoreHorizontal,
   RefreshCw,
+  Settings2,
   Trash2,
 } from 'lucide-react';
-import { useLedger, WebAccount } from '../../../lib/ledger-context.js';
+import { useLedger, WebAccount, WebProviderConnection } from '../../../lib/ledger-context.js';
+import { MarketAndFxMonitorCards } from './MarketAndFxMonitorCards.js';
+import {
+  ProviderConfigDialog,
+  ProviderConfigModalTarget,
+} from './ProviderConfigDialog.js';
 
 const ACCOUNT_GROUP_LABELS: Record<string, string> = {
   DEPOSITORY: 'Cash',
@@ -320,32 +327,79 @@ export const AccountsSettingsSection: React.FC<{
   );
 };
 
+function describeConnectionConfig(conn: WebProviderConnection): string | null {
+  const key = conn.providerKey;
+  const cfg = conn.configSummary;
+  if (key === 'binance') {
+    const keyPart = conn.hasCredentials
+      ? `API Key ${conn.maskedApiKey ?? 'configured'}`
+      : 'API credentials not configured';
+    const netPart = cfg?.useTestnet ? 'Testnet' : 'Spot Mainnet';
+    return `${keyPart} • ${netPart}${cfg?.quoteCurrency ? ` • ${cfg.quoteCurrency}` : ''}`;
+  }
+  if (key === 'yahoo_finance') {
+    const tickers = cfg?.tickers ?? [];
+    return tickers.length > 0
+      ? `Watchlist: ${tickers.slice(0, 6).join(', ')}${tickers.length > 6 ? ` (+${tickers.length - 6})` : ''}`
+      : 'Default watchlist + Investment holdings';
+  }
+  if (key === 'frankfurter_fx') {
+    const base = cfg?.baseCurrency || 'IDR';
+    const targets = cfg?.targetCurrencies ?? [];
+    return `Base ${base} → ${targets.length > 0 ? targets.join(', ') : 'IDR, USD, SGD, EUR, GBP, JPY, AUD, MYR'}`;
+  }
+  return null;
+}
+
 export const BankSyncSettingsSection: React.FC<{
   syncBusy: boolean;
   onSyncAll: () => Promise<void>;
 }> = ({ syncBusy, onSyncAll }) => {
-  const { syncAdapters, syncConnections, connectProvider } = useLedger();
+  const {
+    family,
+    accounts,
+    syncAdapters,
+    syncConnections,
+    marketQuotes,
+    exchangeRates,
+    connectProvider,
+    updateProviderConnection,
+    deleteProviderConnection,
+    syncProviderConnection,
+  } = useLedger();
 
   const [providerSearch, setProviderSearch] = useState<string>('');
   const [providerCategory, setProviderCategory] = useState<
-    'ALL' | 'BANKS' | 'CRYPTO' | 'INVESTMENTS'
-  >('ALL');
-  const [connectingAdapter, setConnectingAdapter] = useState<{
-    key: string;
-    label: string;
+    'LIVE' | 'CRYPTO' | 'INVESTMENTS' | 'ALL'
+  >('LIVE');
+  const [modalTarget, setModalTarget] = useState<ProviderConfigModalTarget | null>(null);
+  const [modalBusy, setModalBusy] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [syncingConnectionId, setSyncingConnectionId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [actionBanner, setActionBanner] = useState<{
+    kind: 'success' | 'error';
+    title: string;
+    text: string;
   } | null>(null);
-  const [institutionDraft, setInstitutionDraft] = useState<string>('');
+
+  const cryptoAccounts = useMemo(
+    () => accounts.filter((a) => a.accountType === 'CRYPTO'),
+    [accounts]
+  );
 
   const filteredAdapters = useMemo(() => {
     const q = providerSearch.trim().toLowerCase();
     return syncAdapters.filter((adapter) => {
-      const cat =
-        adapter.category === 'CRYPTO'
-          ? 'CRYPTO'
-          : adapter.category === 'BROKERAGE' || adapter.category === 'MARKET_DATA'
-            ? 'INVESTMENTS'
-            : 'BANKS';
-      if (providerCategory !== 'ALL' && cat !== providerCategory) return false;
+      if (providerCategory === 'LIVE' && !adapter.supportsLiveSync) return false;
+      if (providerCategory === 'CRYPTO' && adapter.category !== 'CRYPTO') return false;
+      if (
+        providerCategory === 'INVESTMENTS' &&
+        adapter.category !== 'BROKERAGE' &&
+        adapter.category !== 'MARKET_DATA'
+      ) {
+        return false;
+      }
       if (!q) return true;
       return (
         adapter.name.toLowerCase().includes(q) ||
@@ -356,76 +410,206 @@ export const BankSyncSettingsSection: React.FC<{
     });
   }, [syncAdapters, providerSearch, providerCategory]);
 
+  const handleSyncOne = async (conn: WebProviderConnection) => {
+    setActionBanner(null);
+    setSyncingConnectionId(conn.id);
+    try {
+      const res = await syncProviderConnection(conn.id);
+      setActionBanner({
+        kind: res.ok ? 'success' : 'error',
+        title: res.ok ? `${conn.institutionName} Synced` : `${conn.institutionName} Sync Failed`,
+        text: res.message,
+      });
+    } catch (err) {
+      setActionBanner({
+        kind: 'error',
+        title: `${conn.institutionName} Sync Failed`,
+        text: err instanceof Error ? err.message : 'Unable to sync connection.',
+      });
+    } finally {
+      setSyncingConnectionId(null);
+    }
+  };
+
+  const handleDeleteOne = async (conn: WebProviderConnection) => {
+    setActionBanner(null);
+    try {
+      await deleteProviderConnection(conn.id);
+      setConfirmDeleteId(null);
+      setActionBanner({
+        kind: 'success',
+        title: 'Connection Removed',
+        text: `Removed ${conn.institutionName} (${conn.providerName}). Linked accounts remain in your ledger.`,
+      });
+    } catch (err) {
+      setActionBanner({
+        kind: 'error',
+        title: 'Delete Failed',
+        text: err instanceof Error ? err.message : 'Unable to delete connection.',
+      });
+    }
+  };
+
   return (
     <div className="space-y-6">
+      {actionBanner && (
+        <Alert
+          variant={actionBanner.kind}
+          title={actionBanner.title}
+          action={
+            <Button size="sm" variant="secondary" onClick={() => setActionBanner(null)}>
+              Dismiss
+            </Button>
+          }
+        >
+          {actionBanner.text}
+        </Alert>
+      )}
+
       {syncConnections.length > 0 && (
         <div className="space-y-2.5">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-            YOUR CONNECTIONS <span className="mx-1">•</span> {syncConnections.length}
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              YOUR CONNECTIONS <span className="mx-1">•</span> {syncConnections.length}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={syncBusy}
+              icon={<RefreshCw className={`w-3.5 h-3.5 ${syncBusy ? 'animate-spin' : ''}`} />}
+              onClick={() => void onSyncAll()}
+            >
+              Sync All
+            </Button>
           </div>
           <div className="space-y-3">
-            {syncConnections.map((conn) => (
-              <div
-                key={conn.id}
-                className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-surface)] p-4 space-y-3"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-8 h-8 rounded-lg bg-[var(--bg-surface-subtle)] border border-[var(--border-primary)] flex items-center justify-center text-xs font-semibold text-[var(--text-secondary)]">
-                      {conn.institutionName.slice(0, 2).toUpperCase()}
-                    </span>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-[var(--text-primary)]">
-                          {conn.institutionName}
-                        </span>
-                        <Pill label="Beta" color="#64748b" size="xs" />
+            {syncConnections.map((conn) => {
+              const configNote = describeConnectionConfig(conn);
+              const isRowSyncing = syncingConnectionId === conn.id || syncBusy;
+              const isConfirmingDelete = confirmDeleteId === conn.id;
+              return (
+                <div
+                  key={conn.id}
+                  className="rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-surface)] p-4 space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-8 h-8 rounded-lg bg-[var(--bg-surface-subtle)] border border-[var(--border-primary)] flex items-center justify-center text-xs font-semibold text-[var(--text-secondary)]">
+                        {conn.institutionName.slice(0, 2).toUpperCase()}
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-[var(--text-primary)]">
+                            {conn.institutionName}
+                          </span>
+                          <Pill
+                            label={conn.supportsLiveSync ? 'Live Sync' : 'Catalog'}
+                            color={conn.supportsLiveSync ? '#078C52' : '#64748b'}
+                            size="xs"
+                          />
+                        </div>
+                        <div className="text-xs text-[var(--text-secondary)]">
+                          Provider adapter: {conn.providerName}
+                        </div>
+                        {configNote && (
+                          <div className="text-[11px] text-[var(--text-muted)] mt-0.5 font-mono-tabular">
+                            {configNote}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-xs text-[var(--text-secondary)]">
-                        Provider adapter: {conn.providerName}
-                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Pill label={`• ${conn.status || 'CONNECTED'}`} color="#078C52" size="xs" />
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon={<Settings2 className="w-3.5 h-3.5" />}
+                        onClick={() => {
+                          setModalError(null);
+                          setModalTarget({
+                            mode: 'edit',
+                            providerKey: conn.providerKey || conn.providerName,
+                            providerLabel: conn.providerName,
+                            connection: conn,
+                          });
+                        }}
+                      >
+                        Configure
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon={<RefreshCw className={`w-3.5 h-3.5 ${isRowSyncing ? 'animate-spin' : ''}`} />}
+                        disabled={isRowSyncing}
+                        onClick={() => void handleSyncOne(conn)}
+                      >
+                        Sync
+                      </Button>
+                      {isConfirmingDelete ? (
+                        <div className="flex items-center gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void handleDeleteOne(conn)}
+                          >
+                            Confirm Delete
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setConfirmDeleteId(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Delete ${conn.institutionName}`}
+                          onClick={() => setConfirmDeleteId(conn.id)}
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-[var(--status-negative)]" />
+                        </Button>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <Pill label={`• ${conn.status || 'Sync active'}`} color="#078C52" size="xs" />
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      icon={<RefreshCw className={`w-3.5 h-3.5 ${syncBusy ? 'animate-spin' : ''}`} />}
-                      disabled={syncBusy}
-                      onClick={() => void onSyncAll()}
-                    >
-                      Sync
-                    </Button>
+                  <div className="divide-y divide-[var(--border-primary)] text-xs pt-1">
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-[var(--text-secondary)]">Last accepted by Sure</span>
+                      <span className="font-mono-tabular text-[var(--text-primary)]">
+                        {conn.lastSyncedAt ? conn.lastSyncedAt.slice(0, 16).replace('T', ' ') : 'Pending initial sync'}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between py-2">
+                      <span className="text-[var(--text-secondary)]">Connected timestamp</span>
+                      <span className="font-mono-tabular text-[var(--text-primary)]">
+                        {conn.createdAt.slice(0, 10)}
+                      </span>
+                    </div>
                   </div>
                 </div>
-
-                <div className="divide-y divide-[var(--border-primary)] text-xs pt-1">
-                  <div className="flex items-center justify-between py-2">
-                    <span className="text-[var(--text-secondary)]">Last accepted by Sure</span>
-                    <span className="font-mono-tabular text-[var(--text-primary)]">
-                      {conn.lastSyncedAt ? conn.lastSyncedAt.slice(0, 16).replace('T', ' ') : 'Pending initial sync'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2">
-                    <span className="text-[var(--text-secondary)]">Connected timestamp</span>
-                    <span className="font-mono-tabular text-[var(--text-primary)]">
-                      {conn.createdAt.slice(0, 10)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
+
+      <MarketAndFxMonitorCards
+        familyBaseCurrency={family.baseCurrency}
+        marketQuotes={marketQuotes}
+        exchangeRates={exchangeRates}
+        syncBusy={syncBusy}
+        onRefreshAll={onSyncAll}
+      />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <SearchInput
           value={providerSearch}
           onChange={setProviderSearch}
-          placeholder="Search providers..."
+          placeholder="Search providers (Binance, Yahoo, Frankfurter)..."
           shortcutHint=""
           className="flex-1 min-w-[220px]"
         />
@@ -434,10 +618,10 @@ export const BankSyncSettingsSection: React.FC<{
           value={providerCategory}
           onChange={setProviderCategory}
           options={[
-            { value: 'ALL', label: 'All' },
-            { value: 'BANKS', label: 'Banks' },
+            { value: 'LIVE', label: 'Live Sync' },
             { value: 'CRYPTO', label: 'Crypto' },
-            { value: 'INVESTMENTS', label: 'Investments' },
+            { value: 'INVESTMENTS', label: 'Market & FX' },
+            { value: 'ALL', label: 'All' },
           ]}
         />
       </div>
@@ -474,8 +658,8 @@ export const BankSyncSettingsSection: React.FC<{
                           {adapter.name}
                         </span>
                         <Pill
-                          label={adapter.supportsWebhooks ? 'Webhook' : 'Beta'}
-                          color="#64748b"
+                          label={adapter.supportsLiveSync ? 'Live Ready' : adapter.supportsWebhooks ? 'Webhook' : 'Catalog'}
+                          color={adapter.supportsLiveSync ? '#078C52' : '#64748b'}
                           size="xs"
                         />
                       </div>
@@ -485,7 +669,8 @@ export const BankSyncSettingsSection: React.FC<{
                     </div>
                   </div>
                   <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                    Sync {adapter.name} balances, holdings, and historical activity into your household ledger.
+                    {adapter.description ||
+                      `Sync ${adapter.name} balances, holdings, and historical activity into your household ledger.`}
                   </p>
                 </div>
 
@@ -493,12 +678,16 @@ export const BankSyncSettingsSection: React.FC<{
                   <button
                     type="button"
                     onClick={() => {
-                      setConnectingAdapter({ key: adapter.key, label: adapter.name });
-                      setInstitutionDraft(adapter.name);
+                      setModalError(null);
+                      setModalTarget({
+                        mode: 'create',
+                        providerKey: adapter.key,
+                        providerLabel: adapter.name,
+                      });
                     }}
                     className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--text-primary)] hover:underline cursor-pointer"
                   >
-                    <span>Connect</span>
+                    <span>Configure &amp; Connect</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </div>
@@ -508,45 +697,53 @@ export const BankSyncSettingsSection: React.FC<{
         </div>
       </div>
 
-      {/* Connect Bank Sync Provider Modal */}
-      <Dialog
-        open={Boolean(connectingAdapter)}
-        onClose={() => setConnectingAdapter(null)}
-        title={`Connect ${connectingAdapter?.label ?? 'Provider'}`}
-        description="Creates an external financial provider connection and syncs balances."
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setConnectingAdapter(null)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={async () => {
-                if (!connectingAdapter) return;
-                await connectProvider({
-                  providerKey: connectingAdapter.key,
-                  institutionName: institutionDraft.trim() || connectingAdapter.label,
-                });
-                setConnectingAdapter(null);
-              }}
-            >
-              Connect Provider
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <label className="block text-xs font-medium text-[var(--text-secondary)] mb-1">
-            Institution Display Name
-          </label>
-          <input
-            type="text"
-            value={institutionDraft}
-            onChange={(e) => setInstitutionDraft(e.target.value)}
-            placeholder="e.g., Chase Bank, Coinbase Prime"
-            className="w-full px-3 py-2 text-sm rounded-md bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-strong)]"
-          />
-        </div>
-      </Dialog>
+      <ProviderConfigDialog
+        target={modalTarget}
+        familyBaseCurrency={family.baseCurrency}
+        cryptoAccounts={cryptoAccounts}
+        busy={modalBusy}
+        errorText={modalError}
+        onClose={() => {
+          setModalTarget(null);
+          setModalError(null);
+        }}
+        onSubmit={async (payload) => {
+          if (!modalTarget) return;
+          setModalError(null);
+          setModalBusy(true);
+          try {
+            if (modalTarget.mode === 'create') {
+              await connectProvider({
+                providerKey: modalTarget.providerKey,
+                institutionName: payload.institutionName,
+                ...(payload.accountId ? { accountId: payload.accountId } : {}),
+                config: payload.config,
+              });
+              setActionBanner({
+                kind: 'success',
+                title: `${payload.institutionName} Connected`,
+                text: 'Click Sync on the connection card to fetch live data now.',
+              });
+            } else if (modalTarget.connection) {
+              await updateProviderConnection(modalTarget.connection.id, {
+                institutionName: payload.institutionName,
+                ...(payload.accountId !== undefined ? { accountId: payload.accountId } : {}),
+                config: payload.config,
+              });
+              setActionBanner({
+                kind: 'success',
+                title: `${payload.institutionName} Updated`,
+                text: 'Connection configuration saved.',
+              });
+            }
+            setModalTarget(null);
+          } catch (err) {
+            setModalError(err instanceof Error ? err.message : 'Failed to save configuration.');
+          } finally {
+            setModalBusy(false);
+          }
+        }}
+      />
     </div>
   );
 };

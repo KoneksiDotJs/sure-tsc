@@ -123,10 +123,36 @@ export const planningAiMcpPaths: Record<string, Record<string, OpenApiOperationO
   '/api/v1/sync/connections': {
     post: {
       operationId: 'createSyncConnection',
-      summary: 'Connect a bank/institution sync provider (SimpleFIN/Plaid/Manual)',
+      summary: 'Connect and optionally configure an external sync provider (Binance/Yahoo Finance/Frankfurter FX)',
       tags: ['Sync'],
       requestBody: jsonRequestBody('CreateProviderConnectionSchema'),
       responses: createdJson(),
+    },
+  },
+  '/api/v1/sync/connections/{id}': {
+    patch: {
+      operationId: 'updateSyncConnection',
+      summary: 'Update provider connection label, linked account, or encrypted credentials/config',
+      tags: ['Sync'],
+      parameters: [pathParam('id', 'Provider connection UUID', 'uuid')],
+      requestBody: jsonRequestBody('UpdateProviderConnectionSchema'),
+      responses: okJson(),
+    },
+    delete: {
+      operationId: 'deleteSyncConnection',
+      summary: 'Delete a provider connection and unlink associated accounts',
+      tags: ['Sync'],
+      parameters: [pathParam('id', 'Provider connection UUID', 'uuid')],
+      responses: okJson(),
+    },
+  },
+  '/api/v1/sync/connections/{id}/sync': {
+    post: {
+      operationId: 'syncSingleConnection',
+      summary: 'Run a live sync for a single provider connection',
+      tags: ['Sync'],
+      parameters: [pathParam('id', 'Provider connection UUID', 'uuid')],
+      responses: okJson(),
     },
   },
   '/api/v1/sync/run': {
@@ -135,6 +161,60 @@ export const planningAiMcpPaths: Record<string, Record<string, OpenApiOperationO
       summary: 'Trigger a provider balance and transaction sync cycle',
       tags: ['Sync'],
       responses: okJson(),
+    },
+  },
+  '/api/v1/sync/markets/history': {
+    get: {
+      operationId: 'getMarketHistory',
+      summary: 'Fetch historical price series and KPI metrics for a stock, crypto ticker, or FX pair',
+      tags: ['Sync'],
+      parameters: [
+        {
+          name: 'kind',
+          in: 'query',
+          required: false,
+          description: 'Series type: security or fx',
+          schema: { type: 'string', enum: ['security', 'fx'], default: 'security' },
+        },
+        {
+          name: 'ticker',
+          in: 'query',
+          required: false,
+          description: 'Ticker symbol (required when kind=security, e.g. BBCA.JK, BTC-USD)',
+          schema: { type: 'string' },
+        },
+        {
+          name: 'from',
+          in: 'query',
+          required: false,
+          description: 'Base ISO-4217 currency code (required when kind=fx)',
+          schema: { type: 'string', minLength: 3, maxLength: 3 },
+        },
+        {
+          name: 'to',
+          in: 'query',
+          required: false,
+          description: 'Quote ISO-4217 currency code (required when kind=fx)',
+          schema: { type: 'string', minLength: 3, maxLength: 3 },
+        },
+        {
+          name: 'range',
+          in: 'query',
+          required: false,
+          description: 'Historical range window',
+          schema: { type: 'string', enum: ['5d', '1mo', '3mo', '6mo', '1y'], default: '1mo' },
+        },
+      ],
+      responses: okJson(),
+    },
+  },
+  '/api/v1/sync/watchlist': {
+    post: {
+      operationId: 'addWatchlistTicker',
+      summary: 'Fetch a live market quote and register the ticker on the family watchlist',
+      tags: ['Sync'],
+      requestBody: jsonRequestBody('AddWatchlistTickerSchema'),
+      responses: createdJson(),
     },
   },
 

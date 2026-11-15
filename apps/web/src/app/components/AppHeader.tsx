@@ -9,6 +9,7 @@ import {
   PanelLeft,
   PanelRight,
   Sun,
+  TrendingUp,
 } from 'lucide-react';
 import type { NavTabId } from './navigation.js';
 
@@ -19,6 +20,7 @@ interface AppHeaderProps {
   baseCurrency: string;
   isSettingsView: boolean;
   showLeftSidebar: boolean;
+  showMarketSidebar: boolean;
   showAiSidebar: boolean;
   privacyEnabled: boolean;
   darkMode: boolean;
@@ -27,6 +29,7 @@ interface AppHeaderProps {
   onOpenCommandPalette: () => void;
   onTogglePrivacy: () => void;
   onToggleDark: () => void;
+  onToggleMarketSidebar: () => void;
   onToggleAiSidebar: () => void;
 }
 
@@ -37,6 +40,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   baseCurrency,
   isSettingsView,
   showLeftSidebar,
+  showMarketSidebar,
   showAiSidebar,
   privacyEnabled,
   darkMode,
@@ -45,6 +49,7 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
   onOpenCommandPalette,
   onTogglePrivacy,
   onToggleDark,
+  onToggleMarketSidebar,
   onToggleAiSidebar,
 }) => (
   <header className="no-print sticky top-0 z-10 h-14 px-4 sm:px-6 border-b border-[var(--border-primary)] bg-[var(--bg-canvas)]/95 backdrop-blur-sm flex items-center justify-between gap-3">
@@ -54,7 +59,15 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
           type="button"
           onClick={onToggleLeftSidebar}
           className="p-1.5 rounded-lg text-[var(--text-secondary)] cursor-pointer"
-          aria-label={showLeftSidebar ? 'Hide Accounts Sidebar' : 'Show Accounts Sidebar'}
+          aria-label={
+            activeTab === 'markets'
+              ? showLeftSidebar
+                ? 'Hide Markets Sidebar'
+                : 'Show Markets Sidebar'
+              : showLeftSidebar
+                ? 'Hide Accounts Sidebar'
+                : 'Show Accounts Sidebar'
+          }
         >
           <PanelLeft className="w-4 h-4" />
         </button>
@@ -135,6 +148,20 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
         className="focus-ring inline-flex items-center justify-center rounded-md font-medium text-xs px-2.5 h-7 cursor-pointer bg-[var(--bg-surface)] text-[var(--text-primary)] border border-[var(--border-strong)]"
       >
         {darkMode ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleMarketSidebar}
+        aria-label="Toggle Markets & FX Sidebar"
+        className={`focus-ring inline-flex items-center justify-center gap-1.5 rounded-md font-medium text-xs px-2.5 h-7 cursor-pointer border ${
+          showMarketSidebar
+            ? 'bg-[var(--accent-primary)] text-[var(--accent-primary-fg)] border-transparent'
+            : 'bg-[var(--bg-surface)] text-[var(--text-primary)] border-[var(--border-strong)]'
+        }`}
+      >
+        <TrendingUp className="w-3.5 h-3.5 shrink-0" />
+        <span className="hidden sm:inline">Markets</span>
       </button>
 
       <button
