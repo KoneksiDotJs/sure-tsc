@@ -10,87 +10,10 @@ import {
   resolveAiRuntimeConfig,
   updateFamilyAiConfig,
 } from './ai.providers.js';
-import { estimateLlmCostUsd, summarizeLlmUsage } from './ai.usage.js';
+import { queryFamilyLlmUsage, recordLlmUsageEvent } from './ai.usage.tracker.js';
+import { BayesCategorizer } from './bayes.categorizer.js';
 
-/**
- * FR-7.1 Local Naive Bayes Classifier (`BayesCategorizer`)
- * Works 100% locally/offline without sending data to external LLMs (NFR-3 Self-Hosted Parity).
- */
-export class BayesCategorizer {
-  public static async predictCategory(
-    familyId: string,
-    transactionName: string
-  ): Promise<{ categoryId: string | null; categoryName: string | null; confidence: number }> {
-    const tokens = transactionName
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter((t) => t.length > 2);
-
-    const historical = await prisma.entry.findMany({
-      where: {
-        familyId,
-        entryType: 'TRANSACTION',
-        transaction: { categoryId: { not: null } },
-      },
-      include: {
-        transaction: { include: { category: true } },
-      },
-    });
-
-    if (historical.length === 0 || tokens.length === 0) {
-      return { categoryId: null, categoryName: null, confidence: 0 };
-    }
-
-    const categoryCounts = new Map<string, number>();
-    const categoryNames = new Map<string, string>();
-    const tokenCategoryCounts = new Map<string, Map<string, number>>();
-
-    for (const entry of historical) {
-      const catId = entry.transaction?.categoryId;
-      if (!catId) continue;
-      if (entry.transaction?.category) {
-        categoryNames.set(catId, entry.transaction.category.name);
-      }
-      categoryCounts.set(catId, (categoryCounts.get(catId) ?? 0) + 1);
-
-      const entryTokens = entry.name
-        .toLowerCase()
-        .replace(/[^a-z0-9\s]/g, ' ')
-        .split(/\s+/)
-        .filter((t) => t.length > 2);
-
-      for (const tok of entryTokens) {
-        if (!tokenCategoryCounts.has(tok)) {
-          tokenCategoryCounts.set(tok, new Map());
-        }
-        const map = tokenCategoryCounts.get(tok)!;
-        map.set(catId, (map.get(catId) ?? 0) + 1);
-      }
-    }
-
-    let bestCategoryId: string | null = null;
-    let bestScore = -Infinity;
-
-    for (const [catId, catTotal] of categoryCounts.entries()) {
-      let logProb = Math.log(catTotal / historical.length);
-      for (const tok of tokens) {
-        const tokCountInCat = tokenCategoryCounts.get(tok)?.get(catId) ?? 0;
-        logProb += Math.log((tokCountInCat + 1) / (catTotal + categoryCounts.size));
-      }
-      if (logProb > bestScore) {
-        bestScore = logProb;
-        bestCategoryId = catId;
-      }
-    }
-
-    return {
-      categoryId: bestCategoryId,
-      categoryName: bestCategoryId ? categoryNames.get(bestCategoryId) ?? null : null,
-      confidence: bestCategoryId ? 0.89 : 0,
-    };
-  }
-}
+export { BayesCategorizer };
 
 /**
  * FR-7: AI Financial Assistant & Proactive Insights
@@ -130,74 +53,7 @@ export class AiService {
     const categorized: Array<{ entryId: string; name: string; categoryName: string }> = [];
 
     if (options?.provider && options.provider !== 'bayes' && entries.length > 0) {
-      const family = await prisma.family.findUnique({ where: { id: familyId } });
-      if (family?.aiEnabled) {
-        const categories = await prisma.category.findMany({
-          where: { familyId },
-          select: { id: true, name: true, classification: true },
-        });
-        const catNames = categories.map((c) => `${c.name} (${c.classification})`).join(', ');
-        const runtime = resolveAiRuntimeConfig(familyId, {
-          provider: options.provider,
-          ...(options.model ? { model: options.model } : {}),
-        });
-        if (runtime.apiKey || !runtime.preset.requiresKey) {
-          try {
-            const batch = entries.slice(0, 25);
-            const promptPayload = batch.map((e) => ({
-              transaction_id: e.id,
-              description: e.name,
-              amount: decimalToFixed(e.amount),
-            }));
-            const sysPrompt =
-              options.systemPrompt?.trim() ||
-              'Categorize transactions into the given categories. Return JSON array only: [{"transaction_id":"...","category_name":"..."|null}].';
-            const completion = await invokeAiCompletion({
-              runtime,
-              systemPrompt: `${sysPrompt}\nAvailable categories: ${catNames}`,
-              userPrompt: JSON.stringify(promptPayload),
-            });
-            await this.recordLlmUsage({
-              familyId,
-              operation: 'Categorize',
-              provider: completion.provider,
-              model: completion.model,
-              promptTokens: completion.usage?.promptTokens ?? 0,
-              completionTokens: completion.usage?.completionTokens ?? 0,
-            });
-            const jsonMatch = completion.text.match(/\[[\s\S]*\]/);
-            if (jsonMatch) {
-              const parsed = JSON.parse(jsonMatch[0]) as Array<{
-                transaction_id?: string;
-                category_name?: string | null;
-              }>;
-              const entryById = new Map(batch.map((b) => [b.id, b]));
-              const catByName = new Map(
-                categories.map((c) => [c.name.toLowerCase(), c])
-              );
-              for (const row of parsed) {
-                if (!row.transaction_id || !row.category_name) continue;
-                const entry = entryById.get(row.transaction_id);
-                const cat = catByName.get(row.category_name.trim().toLowerCase());
-                if (entry && cat) {
-                  await prisma.transaction.upsert({
-                    where: { entryId: entry.id },
-                    update: { categoryId: cat.id },
-                    create: { entryId: entry.id, categoryId: cat.id },
-                  });
-                  categorized.push({
-                    entryId: entry.id,
-                    name: entry.name,
-                    categoryName: cat.name,
-                  });
-                }
-              }
-            }
-          } catch {
-            // Fall through to local Bayes categorizer for remaining items
-          }
-        }
-      }
+      await this.tryLlmBatchCategorization(familyId, entries, options, categorized);
     }
 
     const handledIds = new Set(categorized.map((c) => c.entryId));
@@ -221,82 +77,88 @@ export class AiService {
     return { categorizedCount: categorized.length, items: categorized };
   }
 
-  private async recordLlmUsage(params: {
-    familyId: string;
-    userId?: string;
-    operation: 'Chat' | 'Categorize' | 'Test';
-    provider: string;
-    model: string;
-    promptTokens: number;
-    completionTokens: number;
-  }) {
-    const promptTokens = Math.max(0, Math.trunc(params.promptTokens));
-    const completionTokens = Math.max(0, Math.trunc(params.completionTokens));
-    const totalTokens = promptTokens + completionTokens;
-    const estimatedCostUsd = estimateLlmCostUsd({
-      provider: params.provider,
-      model: params.model,
-      promptTokens,
-      completionTokens,
+  private async tryLlmBatchCategorization(
+    familyId: string,
+    entries: Array<{ id: string; name: string; amount: unknown }>,
+    options: {
+      provider?: AiConfigUpdateInput['provider'] | 'bayes';
+      model?: string;
+      systemPrompt?: string;
+    },
+    categorized: Array<{ entryId: string; name: string; categoryName: string }>
+  ) {
+    if (!options.provider || options.provider === 'bayes') return;
+
+    const family = await prisma.family.findUnique({ where: { id: familyId } });
+    if (!family?.aiEnabled) return;
+
+    const categories = await prisma.category.findMany({
+      where: { familyId },
+      select: { id: true, name: true, classification: true },
     });
+    const catNames = categories.map((c) => `${c.name} (${c.classification})`).join(', ');
+    const runtime = resolveAiRuntimeConfig(familyId, {
+      provider: options.provider,
+      ...(options.model ? { model: options.model } : {}),
+    });
+    if (!runtime.apiKey && runtime.preset.requiresKey) return;
 
     try {
-      await prisma.llmUsageEvent.create({
-        data: {
-          familyId: params.familyId,
-          userId: params.userId,
-          operation: params.operation,
-          provider: params.provider,
-          model: params.model,
-          promptTokens,
-          completionTokens,
-          totalTokens,
-          estimatedCostUsd,
-        },
+      const batch = entries.slice(0, 25);
+      const promptPayload = batch.map((e) => ({
+        transaction_id: e.id,
+        description: e.name,
+        amount: decimalToFixed(e.amount as Parameters<typeof decimalToFixed>[0]),
+      }));
+      const sysPrompt =
+        options.systemPrompt?.trim() ||
+        'Categorize transactions into the given categories. Return JSON array only: [{"transaction_id":"...","category_name":"..."|null}].';
+      const completion = await invokeAiCompletion({
+        runtime,
+        systemPrompt: `${sysPrompt}\nAvailable categories: ${catNames}`,
+        userPrompt: JSON.stringify(promptPayload),
       });
+      await recordLlmUsageEvent({
+        familyId,
+        operation: 'Categorize',
+        provider: completion.provider,
+        model: completion.model,
+        promptTokens: completion.usage?.promptTokens ?? 0,
+        completionTokens: completion.usage?.completionTokens ?? 0,
+      });
+      const jsonMatch = completion.text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return;
+
+      const parsed = JSON.parse(jsonMatch[0]) as Array<{
+        transaction_id?: string;
+        category_name?: string | null;
+      }>;
+      const entryById = new Map(batch.map((b) => [b.id, b]));
+      const catByName = new Map(categories.map((c) => [c.name.toLowerCase(), c]));
+      for (const row of parsed) {
+        if (!row.transaction_id || !row.category_name) continue;
+        const entry = entryById.get(row.transaction_id);
+        const cat = catByName.get(row.category_name.trim().toLowerCase());
+        if (entry && cat) {
+          await prisma.transaction.upsert({
+            where: { entryId: entry.id },
+            update: { categoryId: cat.id },
+            create: { entryId: entry.id, categoryId: cat.id },
+          });
+          categorized.push({
+            entryId: entry.id,
+            name: entry.name,
+            categoryName: cat.name,
+          });
+        }
+      }
     } catch {
-      // Usage telemetry failure must not block user-facing AI completions
+      // Fall through to local Bayes categorizer for remaining items
     }
   }
 
   public async getLlmUsage(familyId: string, query?: LlmUsageQueryInput) {
-    const now = new Date();
-    const defaultEnd = now.toISOString().slice(0, 10);
-    const thirtyDaysAgo = new Date(now);
-    thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
-    const defaultStart = thirtyDaysAgo.toISOString().slice(0, 10);
-
-    const startDate = query?.startDate ?? defaultStart;
-    const endDate = query?.endDate ?? defaultEnd;
-    const limit = query?.limit ?? 50;
-
-    const gte = new Date(`${startDate}T00:00:00.000Z`);
-    const lte = new Date(`${endDate}T23:59:59.999Z`);
-
-    const rows = await prisma.llmUsageEvent.findMany({
-      where: {
-        familyId,
-        createdAt: { gte, lte },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
-
-    return summarizeLlmUsage(
-      rows.map((r) => ({
-        id: r.id,
-        operation: r.operation,
-        provider: r.provider,
-        model: r.model,
-        promptTokens: r.promptTokens,
-        completionTokens: r.completionTokens,
-        totalTokens: r.totalTokens,
-        estimatedCostUsd: r.estimatedCostUsd ? decimalToFixed(r.estimatedCostUsd) : null,
-        createdAt: r.createdAt.toISOString(),
-      })),
-      startDate,
-      endDate
-    );
+    return queryFamilyLlmUsage(familyId, query);
   }
 
   public async listAiModels(familyId: string, override?: Partial<AiConfigUpdateInput>) {
@@ -323,7 +185,7 @@ export class AiService {
         systemPrompt: 'You are a helpful financial assistant. Reply briefly with OK.',
         userPrompt: 'Ping connection check.',
       });
-      await this.recordLlmUsage({
+      await recordLlmUsageEvent({
         familyId,
         operation: 'Test',
         provider: result.provider,
@@ -452,7 +314,7 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
         const promptTokens = completion.usage?.promptTokens ?? 0;
         const completionTokens = completion.usage?.completionTokens ?? 0;
         completionTotalTokens = promptTokens + completionTokens;
-        await this.recordLlmUsage({
+        await recordLlmUsageEvent({
           familyId,
           userId,
           operation: 'Chat',
@@ -479,7 +341,7 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
         `_Free LLM not configured yet — add a free **Groq**, **Google Gemini**, **OpenRouter (:free)** API key, or local **Ollama** URL in **Settings → AI Prompts** (or \`.env\`) to enable conversational answers._`;
     }
 
-    const chat = await prisma.chat.create({
+    return prisma.chat.create({
       data: {
         familyId,
         userId,
@@ -487,10 +349,7 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
         tokenCount: completionTotalTokens,
         messages: {
           create: [
-            {
-              role: 'USER',
-              content: prompt,
-            },
+            { role: 'USER', content: prompt },
             {
               role: 'ASSISTANT',
               content: assistantReply,
@@ -503,8 +362,6 @@ VERIFIED FAMILY LEDGER CONTEXT (${accOverview.summary.baseCurrency}):
         messages: { orderBy: { createdAt: 'asc' } },
       },
     });
-
-    return chat;
   }
 
   public async generateProactiveInsights(familyId: string) {
